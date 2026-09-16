@@ -34,7 +34,7 @@ try:
     API_KEY = st.secrets["API_KEY"]
 except Exception:
     API_KEY = ""
-MODEL_NAME = "gemini-2.5-flash"  # stable, widely available; change if you have access to a newer model
+MODEL_NAME = "gemini-3.6-flash"  # stable, widely available; change if you have access to a newer model
 OTP_VALID_SECONDS = 300  # 5 min
 USER_AVATAR = "🧑"
 BOT_AVATAR = "⚡"
