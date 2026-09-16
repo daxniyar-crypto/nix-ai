@@ -34,7 +34,7 @@ try:
     API_KEY = st.secrets["API_KEY"]
 except Exception:
     API_KEY = ""
-MODEL_NAME = "gemini-3.8-flash"
+MODEL_NAME = "gemini-2.5-flash"  # stable, widely available; change if you have access to a newer model
 OTP_VALID_SECONDS = 300  # 5 min
 USER_AVATAR = "🧑"
 BOT_AVATAR = "⚡"
@@ -179,6 +179,29 @@ def extract_text(uploaded_file):
         return None
 
 
+def _with_retry(fn, max_attempts=4, base_delay=1.0):
+    """
+    Runs fn() with automatic retries on transient errors (503 overloaded,
+    429 rate-limited, timeouts, connection resets). Uses exponential backoff
+    so a busy Gemini server doesn't kill the demo — it just quietly retries.
+    Raises the last exception if all attempts fail.
+    """
+    transient_markers = ["503", "overloaded", "429", "rate limit", "timeout",
+                          "unavailable", "deadline", "connection reset", "temporarily"]
+    last_err = None
+    for attempt in range(max_attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last_err = e
+            err_text = str(e).lower()
+            is_transient = any(marker in err_text for marker in transient_markers)
+            if not is_transient or attempt == max_attempts - 1:
+                raise
+            time.sleep(base_delay * (2 ** attempt))  # 1s, 2s, 4s, ...
+    raise last_err
+
+
 def _typewriter(text: str, delay: float = 0.012):
     """Generator that yields the reply word by word for a streaming/typewriter effect."""
     words = text.split(" ")
@@ -202,6 +225,35 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
             stream_placeholder.markdown(msg)
         return msg
 
+    # Build a plain-text transcript for context (used by both API paths below)
+    transcript = ""
+    for m in st.session_state.messages[:-1]:
+        speaker = "User" if m["role"] == "user" else "Assistant"
+        transcript += f"{speaker}: {m['content']}\n"
+
+    full_prompt = ""
+    if system_context:
+        full_prompt += f"Context:\n{system_context}\n\n"
+    if transcript:
+        full_prompt += f"Conversation so far:\n{transcript}\n"
+    full_prompt += f"User: {prompt}"
+
+    # --- Path 1: Interactions API (recommended for new "AQ." auth keys) ---
+    try:
+        if hasattr(client, "interactions"):
+            if stream_placeholder:
+                stream_placeholder.markdown("⏳ Connecting...")
+            result = _with_retry(lambda: client.interactions.create(model=MODEL_NAME, input=full_prompt))
+            text = result.output_text
+            if stream_placeholder:
+                for partial in _typewriter(text):
+                    stream_placeholder.markdown(partial + "▌")
+                stream_placeholder.markdown(text)
+            return text
+    except Exception:
+        pass  # fall through to legacy path below (e.g. older SDK, legacy AIzaSy key)
+
+    # --- Path 2: legacy models.generate_content (works with older AIzaSy keys) ---
     history_formatted = [
         {
             "role": "user" if m["role"] == "user" else "model",
@@ -209,28 +261,27 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
         }
         for m in st.session_state.messages[:-1]
     ]
-
-    full_prompt = f"Context:\n{system_context}\n\nQuery: {prompt}" if system_context else prompt
     contents = history_formatted + [{"role": "user", "parts": [{"text": full_prompt}]}]
 
-    # Try real streaming first
     try:
         if hasattr(client.models, "generate_content_stream"):
-            collected = ""
-            for chunk in client.models.generate_content_stream(model=MODEL_NAME, contents=contents):
-                piece = getattr(chunk, "text", "") or ""
-                collected += piece
-                if stream_placeholder:
-                    stream_placeholder.markdown(collected + "▌")
+            def _run_stream():
+                collected = ""
+                for chunk in client.models.generate_content_stream(model=MODEL_NAME, contents=contents):
+                    piece = getattr(chunk, "text", "") or ""
+                    collected += piece
+                    if stream_placeholder:
+                        stream_placeholder.markdown(collected + "▌")
+                return collected
+            collected = _with_retry(_run_stream)
             if stream_placeholder:
                 stream_placeholder.markdown(collected)
             return collected
     except Exception:
-        pass  # fall through to non-streaming call below
+        pass
 
-    # Fallback: single call, then typewriter it into the UI
     try:
-        response = client.models.generate_content(model=MODEL_NAME, contents=contents)
+        response = _with_retry(lambda: client.models.generate_content(model=MODEL_NAME, contents=contents))
         text = response.text
         if stream_placeholder:
             for partial in _typewriter(text):
@@ -238,7 +289,17 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
             stream_placeholder.markdown(text)
         return text
     except Exception as e:
-        err = f"⚠️ Error communicating with Gemini: {e}"
+        # Friendly message instead of a raw stack trace / error code —
+        # so a demo never shows something scary like "503" on screen.
+        err_text = str(e).lower()
+        if any(m in err_text for m in ["503", "overloaded", "unavailable"]):
+            err = "⚠️ Gemini's servers are busy right now. Please try again in a few seconds."
+        elif "429" in err_text or "rate limit" in err_text:
+            err = "⚠️ Too many requests right now — please wait a moment and try again."
+        elif "401" in err_text or "unauthenticated" in err_text or "invalid" in err_text:
+            err = "⚠️ API key issue — please check the key in Settings/Secrets."
+        else:
+            err = f"⚠️ Something went wrong talking to Gemini: {e}"
         if stream_placeholder:
             stream_placeholder.markdown(err)
         return err
