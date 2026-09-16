@@ -3,8 +3,9 @@ NIX AI — Professional Gen-Z Minimalist Assistant (UI/UX Upgraded)
 -------------------------------------------------------------------
 Upgrades in this version:
   1. Streaming replies (typewriter effect) instead of one-shot text
-  2. Chat avatars for user / assistant
+  2. Custom chat bubbles, no avatars/icons — user messages left, AI replies right
   3. Light / Dark theme toggle (persisted in session)
+  4. Automatic retry on transient errors (503 / 429 / timeouts)
 """
 
 import streamlit as st
@@ -34,15 +35,13 @@ try:
     API_KEY = st.secrets["API_KEY"]
 except Exception:
     API_KEY = ""
-MODEL_NAME = "gemini-3.6-flash"  # stable, widely available; change if you have access to a newer model
+MODEL_NAME = "gemini-3.6-flash"  # current model; gemini-2.5-flash is no longer available to new users
 OTP_VALID_SECONDS = 300  # 5 min
-USER_AVATAR = "🧑"
-BOT_AVATAR = "⚡"
 
 st.set_page_config(page_title="NIX AI", page_icon="⚡", layout="centered")
 
 client = None
-if genai and API_KEY :
+if genai and API_KEY and API_KEY != "APNI_ASLI_KEY_YAHAN_PASTE_KAR_DENA":
     try:
         client = genai.Client(api_key=API_KEY)
     except Exception:
@@ -136,6 +135,37 @@ def inject_css(theme: str):
             border-radius: 12px;
             padding: 1rem;
         }}
+        /* Custom chat bubbles: user on the left, assistant on the right, no avatars */
+        .chat-row {{
+            display: flex;
+            width: 100%;
+            margin-bottom: 0.6rem;
+        }}
+        .chat-row.user {{
+            justify-content: flex-start;
+        }}
+        .chat-row.assistant {{
+            justify-content: flex-end;
+        }}
+        .chat-bubble {{
+            max-width: 78%;
+            padding: 0.7rem 1rem;
+            border-radius: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }}
+        .chat-bubble.user {{
+            background-color: {card_bg};
+            border: 1px solid {card_border};
+            color: {fg};
+            border-bottom-left-radius: 4px;
+        }}
+        .chat-bubble.assistant {{
+            background-color: {btn_bg};
+            border: 1px solid {btn_border};
+            color: {fg};
+            border-bottom-right-radius: 4px;
+        }}
         input, textarea {{
             background-color: {input_bg} !important;
             color: {fg} !important;
@@ -212,6 +242,13 @@ def _typewriter(text: str, delay: float = 0.012):
         time.sleep(delay)
 
 
+def _bubble_html(text: str, role: str) -> str:
+    """Wraps text in a styled chat-bubble div (right-aligned for assistant, left for user)."""
+    import html as _html
+    safe = _html.escape(text).replace("\n", "<br>")
+    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{safe}</div></div>'
+
+
 def ask_ai(prompt, system_context="", stream_placeholder=None):
     """
     Calls Gemini. If the SDK supports streaming (generate_content_stream), uses it
@@ -222,7 +259,7 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
     if client is None:
         msg = "⚠️ Please update `API_KEY` in the code with a valid Gemini key from Google AI Studio (starts with `AQ.` or `AIzaSy`)!"
         if stream_placeholder:
-            stream_placeholder.markdown(msg)
+            stream_placeholder.markdown(_bubble_html(msg, "assistant"), unsafe_allow_html=True)
         return msg
 
     # Build a plain-text transcript for context (used by both API paths below)
@@ -242,13 +279,13 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
     try:
         if hasattr(client, "interactions"):
             if stream_placeholder:
-                stream_placeholder.markdown("⏳ Connecting...")
+                stream_placeholder.markdown(_bubble_html("⏳ Connecting...", "assistant"), unsafe_allow_html=True)
             result = _with_retry(lambda: client.interactions.create(model=MODEL_NAME, input=full_prompt))
             text = result.output_text
             if stream_placeholder:
                 for partial in _typewriter(text):
-                    stream_placeholder.markdown(partial + "▌")
-                stream_placeholder.markdown(text)
+                    stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
+                stream_placeholder.markdown(_bubble_html(text, "assistant"), unsafe_allow_html=True)
             return text
     except Exception:
         pass  # fall through to legacy path below (e.g. older SDK, legacy AIzaSy key)
@@ -271,11 +308,11 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
                     piece = getattr(chunk, "text", "") or ""
                     collected += piece
                     if stream_placeholder:
-                        stream_placeholder.markdown(collected + "▌")
+                        stream_placeholder.markdown(_bubble_html(collected + "▌", "assistant"), unsafe_allow_html=True)
                 return collected
             collected = _with_retry(_run_stream)
             if stream_placeholder:
-                stream_placeholder.markdown(collected)
+                stream_placeholder.markdown(_bubble_html(collected, "assistant"), unsafe_allow_html=True)
             return collected
     except Exception:
         pass
@@ -285,8 +322,8 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
         text = response.text
         if stream_placeholder:
             for partial in _typewriter(text):
-                stream_placeholder.markdown(partial + "▌")
-            stream_placeholder.markdown(text)
+                stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
+            stream_placeholder.markdown(_bubble_html(text, "assistant"), unsafe_allow_html=True)
         return text
     except Exception as e:
         # Friendly message instead of a raw stack trace / error code —
@@ -301,7 +338,7 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
         else:
             err = f"⚠️ Something went wrong talking to Gemini: {e}"
         if stream_placeholder:
-            stream_placeholder.markdown(err)
+            stream_placeholder.markdown(_bubble_html(err, "assistant"), unsafe_allow_html=True)
         return err
 
 
@@ -374,6 +411,7 @@ def main_app():
                 st.success(f"Loaded: {uploaded.name} ({len(text)} chars)")
                 if st.button("Summarize Document"):
                     with st.spinner("Analyzing document..."):
+                        st.markdown("### Summary")
                         summary_placeholder = st.empty()
                         ask_ai(
                             "Provide a clean, concise summary of this document in bullet points:",
@@ -389,25 +427,20 @@ def main_app():
                 st.session_state[k] = v
             st.rerun()
 
-    # Render chat history with avatars
+    # Render chat history as bubbles: user on the left, assistant on the right, no avatars/icons
     for msg in st.session_state.messages:
-        avatar = USER_AVATAR if msg["role"] == "user" else BOT_AVATAR
-        with st.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
+        st.markdown(_bubble_html(msg["content"], msg["role"]), unsafe_allow_html=True)
 
     user_input = st.chat_input("Type a message or query...")
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user", avatar=USER_AVATAR):
-            st.markdown(user_input)
+        st.markdown(_bubble_html(user_input, "user"), unsafe_allow_html=True)
 
-        with st.chat_message("assistant", avatar=BOT_AVATAR):
-            placeholder = st.empty()
-            with st.spinner("Thinking..."):
-                context = ""
-                if st.session_state.doc_text:
-                    context = f"Reference Document:\n{st.session_state.doc_text[:8000]}"
-                reply = ask_ai(user_input, system_context=context, stream_placeholder=placeholder)
+        placeholder = st.empty()
+        context = ""
+        if st.session_state.doc_text:
+            context = f"Reference Document:\n{st.session_state.doc_text[:8000]}"
+        reply = ask_ai(user_input, system_context=context, stream_placeholder=placeholder)
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
