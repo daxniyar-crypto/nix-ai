@@ -11,6 +11,7 @@ Upgrades in this version:
 import streamlit as st
 import random
 import time
+import urllib.parse
 
 try:
     import PyPDF2
@@ -381,6 +382,20 @@ def login_page():
                 st.session_state.otp = generate_otp()
                 st.session_state.otp_time = time.time()
                 st.rerun()
+
+    # --- Help / contact section ---
+    whatsapp_number = "918822166691"  # +91 8822166691, no "+" or spaces for wa.me links
+    whatsapp_message = "Hey Niyar, I need help with NIX AI 🙏"
+    wa_link = f"https://wa.me/{whatsapp_number}?text={urllib.parse.quote(whatsapp_message)}"
+
+    st.markdown(f"""
+    <div style='text-align:center; font-size:0.8rem; opacity:0.65; margin-top:2.5rem; line-height:1.6;'>
+        For any kind of help, contact us —<br>
+        <a href="mailto:niyardaxx@gmail.com" style="color:inherit; text-decoration:underline;">niyardaxx@gmail.com</a>
+        &nbsp;or&nbsp;
+        <a href="{wa_link}" target="_blank" style="color:inherit; text-decoration:underline;">+91 88221 66691</a>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------
