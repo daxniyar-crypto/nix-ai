@@ -42,7 +42,7 @@ BOT_AVATAR = "⚡"
 st.set_page_config(page_title="NIX AI", page_icon="⚡", layout="centered")
 
 client = None
-if genai and API_KEY and API_KEY != "APNI_ASLI_KEY_YAHAN_PASTE_KAR_DENA":
+if genai and API_KEY and API_KEY != "AQ.Ab8RN6JQ5rZLIMc-UjXcl7xW3_OYIJHQub-SUrLtXHv8Q849Ag":
     try:
         client = genai.Client(api_key=API_KEY)
     except Exception:
