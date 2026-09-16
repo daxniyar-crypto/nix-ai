@@ -1,6 +1,10 @@
 """
-NIX AI — Professional Gen-Z Minimalist Assistant (Final Working Version)
-----------------------------------------------------------------------
+NIX AI — Professional Gen-Z Minimalist Assistant (UI/UX Upgraded)
+-------------------------------------------------------------------
+Upgrades in this version:
+  1. Streaming replies (typewriter effect) instead of one-shot text
+  2. Chat avatars for user / assistant
+  3. Light / Dark theme toggle (persisted in session)
 """
 
 import streamlit as st
@@ -26,91 +30,23 @@ except ImportError:
 # ---------------------------------------------------------------------
 # CONFIG & API SETUP
 # ---------------------------------------------------------------------
-# Key ab code me nahi, Streamlit secrets me rakhi hai (safe hai public repo ke liye).
-# Local pe: .streamlit/secrets.toml file me daalo.
-# Streamlit Cloud pe: app dashboard > Settings > Secrets me daalo.
 try:
     API_KEY = st.secrets["API_KEY"]
 except Exception:
     API_KEY = ""
 MODEL_NAME = "gemini-3.8-flash"
 OTP_VALID_SECONDS = 300  # 5 min
+USER_AVATAR = "🧑"
+BOT_AVATAR = "⚡"
 
 st.set_page_config(page_title="NIX AI", page_icon="⚡", layout="centered")
 
-# Configure Gemini client with new SDK (works with AQ. and AIzaSy keys both)
 client = None
 if genai and API_KEY and API_KEY != "APNI_ASLI_KEY_YAHAN_PASTE_KAR_DENA":
     try:
         client = genai.Client(api_key=API_KEY)
     except Exception:
         client = None
-
-
-# ---------------------------------------------------------------------
-# PROFESSIONAL GEN-Z MINIMALIST CSS
-# ---------------------------------------------------------------------
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #0b0f19;
-        color: #e2e8f0;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    }
-    h1, h2, h3 { 
-        font-weight: 700 !important; 
-        letter-spacing: -0.025em;
-    }
-    .nix-title {
-        text-align: center;
-        font-size: 2.5rem;
-        color: #ffffff;
-        margin-bottom: 0;
-        font-weight: 800;
-    }
-    .nix-sub {
-        text-align: center;
-        color: #94a3b8;
-        font-size: 0.95rem;
-        margin-top: 4px;
-        margin-bottom: 2rem;
-        letter-spacing: 0.05em;
-    }
-    div.stButton > button {
-        background: #1e293b;
-        color: #f8fafc;
-        border: 1px solid #334155;
-        border-radius: 8px;
-        padding: 0.5rem 1.2rem;
-        font-weight: 600;
-        transition: all 0.2s ease;
-    }
-    div.stButton > button:hover {
-        background: #334155;
-        border-color: #475569;
-        color: #ffffff;
-    }
-    section[data-testid="stSidebar"] {
-        background-color: #0f172a;
-        border-right: 1px solid #1e293b;
-    }
-    .stChatMessage { 
-        background-color: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 12px;
-        padding: 1rem;
-    }
-    input, textarea {
-        background-color: #111827 !important;
-        color: #f8fafc !important;
-        border-color: #374151 !important;
-        border-radius: 8px !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("<h1 class='nix-title'>NIX AI</h1>", unsafe_allow_html=True)
-st.markdown("<p class='nix-sub'>MINIMAL INTELLIGENCE // SECURE & FAST</p>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------
@@ -125,10 +61,95 @@ defaults = {
     "messages": [],
     "doc_text": "",
     "doc_name": "",
+    "theme": "dark",   # NEW: theme toggle state
 }
 for key, val in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = val
+
+
+# ---------------------------------------------------------------------
+# THEME CSS (dark / light)
+# ---------------------------------------------------------------------
+def inject_css(theme: str):
+    if theme == "dark":
+        bg, fg, sub = "#0b0f19", "#e2e8f0", "#94a3b8"
+        card_bg, card_border = "#111827", "#1f2937"
+        input_bg, input_border = "#111827", "#374151"
+        btn_bg, btn_border, btn_hover = "#1e293b", "#334155", "#334155"
+        sidebar_bg, sidebar_border = "#0f172a", "#1e293b"
+        title_color = "#ffffff"
+    else:
+        bg, fg, sub = "#f8fafc", "#0f172a", "#64748b"
+        card_bg, card_border = "#ffffff", "#e2e8f0"
+        input_bg, input_border = "#ffffff", "#cbd5e1"
+        btn_bg, btn_border, btn_hover = "#e2e8f0", "#cbd5e1", "#cbd5e1"
+        sidebar_bg, sidebar_border = "#f1f5f9", "#e2e8f0"
+        title_color = "#0b0f19"
+
+    st.markdown(f"""
+    <style>
+        .stApp {{
+            background-color: {bg};
+            color: {fg};
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }}
+        h1, h2, h3 {{
+            font-weight: 700 !important;
+            letter-spacing: -0.025em;
+        }}
+        .nix-title {{
+            text-align: center;
+            font-size: 2.5rem;
+            color: {title_color};
+            margin-bottom: 0;
+            font-weight: 800;
+        }}
+        .nix-sub {{
+            text-align: center;
+            color: {sub};
+            font-size: 0.95rem;
+            margin-top: 4px;
+            margin-bottom: 2rem;
+            letter-spacing: 0.05em;
+        }}
+        div.stButton > button {{
+            background: {btn_bg};
+            color: {fg};
+            border: 1px solid {btn_border};
+            border-radius: 8px;
+            padding: 0.5rem 1.2rem;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }}
+        div.stButton > button:hover {{
+            background: {btn_hover};
+            border-color: {btn_border};
+        }}
+        section[data-testid="stSidebar"] {{
+            background-color: {sidebar_bg};
+            border-right: 1px solid {sidebar_border};
+        }}
+        .stChatMessage {{
+            background-color: {card_bg};
+            border: 1px solid {card_border};
+            border-radius: 12px;
+            padding: 1rem;
+        }}
+        input, textarea {{
+            background-color: {input_bg} !important;
+            color: {fg} !important;
+            border-color: {input_border} !important;
+            border-radius: 8px !important;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+inject_css(st.session_state.theme)
+
+st.markdown("<h1 class='nix-title'>NIX AI</h1>", unsafe_allow_html=True)
+st.markdown("<p class='nix-sub'>MINIMAL INTELLIGENCE // SECURE & FAST</p>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------
@@ -158,30 +179,69 @@ def extract_text(uploaded_file):
         return None
 
 
-def ask_ai(prompt, system_context=""):
+def _typewriter(text: str, delay: float = 0.012):
+    """Generator that yields the reply word by word for a streaming/typewriter effect."""
+    words = text.split(" ")
+    buf = ""
+    for i, w in enumerate(words):
+        buf += (" " if i > 0 else "") + w
+        yield buf
+        time.sleep(delay)
+
+
+def ask_ai(prompt, system_context="", stream_placeholder=None):
+    """
+    Calls Gemini. If the SDK supports streaming (generate_content_stream), uses it
+    for real token-by-token output. Otherwise falls back to a typewriter effect
+    over the full response so the UI still feels alive.
+    Returns the final full text.
+    """
     if client is None:
-        return "⚠️ Please update `API_KEY` in the code with a valid Gemini key from Google AI Studio (starts with `AQ.` or `AIzaSy`)!"
+        msg = "⚠️ Please update `API_KEY` in the code with a valid Gemini key from Google AI Studio (starts with `AQ.` or `AIzaSy`)!"
+        if stream_placeholder:
+            stream_placeholder.markdown(msg)
+        return msg
 
+    history_formatted = [
+        {
+            "role": "user" if m["role"] == "user" else "model",
+            "parts": [{"text": m["content"]}],
+        }
+        for m in st.session_state.messages[:-1]
+    ]
+
+    full_prompt = f"Context:\n{system_context}\n\nQuery: {prompt}" if system_context else prompt
+    contents = history_formatted + [{"role": "user", "parts": [{"text": full_prompt}]}]
+
+    # Try real streaming first
     try:
-        # Build conversation history in the format the new SDK expects
-        history_formatted = [
-            {
-                "role": "user" if m["role"] == "user" else "model",
-                "parts": [{"text": m["content"]}],
-            }
-            for m in st.session_state.messages[:-1]
-        ]
+        if hasattr(client.models, "generate_content_stream"):
+            collected = ""
+            for chunk in client.models.generate_content_stream(model=MODEL_NAME, contents=contents):
+                piece = getattr(chunk, "text", "") or ""
+                collected += piece
+                if stream_placeholder:
+                    stream_placeholder.markdown(collected + "▌")
+            if stream_placeholder:
+                stream_placeholder.markdown(collected)
+            return collected
+    except Exception:
+        pass  # fall through to non-streaming call below
 
-        full_prompt = f"Context:\n{system_context}\n\nQuery: {prompt}" if system_context else prompt
-        contents = history_formatted + [{"role": "user", "parts": [{"text": full_prompt}]}]
-
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=contents,
-        )
-        return response.text
+    # Fallback: single call, then typewriter it into the UI
+    try:
+        response = client.models.generate_content(model=MODEL_NAME, contents=contents)
+        text = response.text
+        if stream_placeholder:
+            for partial in _typewriter(text):
+                stream_placeholder.markdown(partial + "▌")
+            stream_placeholder.markdown(text)
+        return text
     except Exception as e:
-        return f"⚠️ Error communicating with Gemini: {e}"
+        err = f"⚠️ Error communicating with Gemini: {e}"
+        if stream_placeholder:
+            stream_placeholder.markdown(err)
+        return err
 
 
 # ---------------------------------------------------------------------
@@ -189,7 +249,7 @@ def ask_ai(prompt, system_context=""):
 # ---------------------------------------------------------------------
 def login_page():
     st.subheader("Authentication")
-    st.markdown("<p style='color: #64748b; font-size: 0.85rem;'>Enter your mobile number to initialize session.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-size: 0.85rem; opacity: 0.7;'>Enter your mobile number to initialize session.</p>", unsafe_allow_html=True)
 
     if not st.session_state.otp_sent:
         phone = st.text_input("Phone Number", max_chars=10, placeholder="9876543210")
@@ -230,6 +290,18 @@ def login_page():
 # ---------------------------------------------------------------------
 def main_app():
     with st.sidebar:
+        # NEW: theme toggle
+        st.subheader("Appearance")
+        theme_choice = st.radio(
+            "Theme", ["dark", "light"],
+            index=0 if st.session_state.theme == "dark" else 1,
+            horizontal=True,
+        )
+        if theme_choice != st.session_state.theme:
+            st.session_state.theme = theme_choice
+            st.rerun()
+
+        st.markdown("---")
         st.subheader("Document Context")
         uploaded = st.file_uploader("Upload reference file", type=["txt", "pdf", "docx"])
 
@@ -241,12 +313,12 @@ def main_app():
                 st.success(f"Loaded: {uploaded.name} ({len(text)} chars)")
                 if st.button("Summarize Document"):
                     with st.spinner("Analyzing document..."):
-                        summary = ask_ai(
+                        summary_placeholder = st.empty()
+                        ask_ai(
                             "Provide a clean, concise summary of this document in bullet points:",
-                            system_context=text[:12000]
+                            system_context=text[:12000],
+                            stream_placeholder=summary_placeholder,
                         )
-                    st.markdown("### Summary")
-                    st.write(summary)
             else:
                 st.error("Failed to parse file.")
 
@@ -256,24 +328,26 @@ def main_app():
                 st.session_state[k] = v
             st.rerun()
 
+    # Render chat history with avatars
     for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
+        avatar = USER_AVATAR if msg["role"] == "user" else BOT_AVATAR
+        with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
     user_input = st.chat_input("Type a message or query...")
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar=USER_AVATAR):
             st.markdown(user_input)
 
-        with st.chat_message("assistant"):
-            with st.spinner("Processing..."):
+        with st.chat_message("assistant", avatar=BOT_AVATAR):
+            placeholder = st.empty()
+            with st.spinner("Thinking..."):
                 context = ""
                 if st.session_state.doc_text:
                     context = f"Reference Document:\n{st.session_state.doc_text[:8000]}"
+                reply = ask_ai(user_input, system_context=context, stream_placeholder=placeholder)
 
-                reply = ask_ai(user_input, system_context=context)
-                st.markdown(reply)
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
 
