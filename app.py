@@ -352,6 +352,23 @@ def _bubble_html(text: str, role: str) -> str:
     return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{safe}</div></div>'
 
 
+def _loading_bubble_html() -> str:
+    """An assistant bubble with a bouncing 🚀 shown while waiting for a reply."""
+    return (
+        '<div class="chat-row assistant"><div class="chat-bubble assistant">'
+        '<span class="nix-rocket">🚀</span>'
+        '</div></div>'
+        '<style>'
+        '@keyframes nix-rocket-bounce {'
+        '  0%, 100% { transform: translateY(0); }'
+        '  50% { transform: translateY(-10px); }'
+        '}'
+        '.nix-rocket { display: inline-block; font-size: 1.4rem; '
+        'animation: nix-rocket-bounce 0.7s ease-in-out infinite; }'
+        '</style>'
+    )
+
+
 def ask_ai(prompt, system_context="", stream_placeholder=None):
     """
     Calls Gemini. If the SDK supports streaming (generate_content_stream), uses it
@@ -382,7 +399,7 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
     try:
         if hasattr(client, "interactions"):
             if stream_placeholder:
-                stream_placeholder.markdown(_bubble_html("⏳ Connecting...", "assistant"), unsafe_allow_html=True)
+                stream_placeholder.markdown(_loading_bubble_html(), unsafe_allow_html=True)
             result = _with_retry(lambda: client.interactions.create(model=MODEL_NAME, input=full_prompt))
             text = result.output_text
             if stream_placeholder:
@@ -638,6 +655,7 @@ def main_app():
         db_save_message(st.session_state.current_conversation_id, "user", display_text)
 
         placeholder = st.empty()
+        placeholder.markdown(_loading_bubble_html(), unsafe_allow_html=True)
 
         if files:
             image_file = files[0]
