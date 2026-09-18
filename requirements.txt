@@ -1,4 +1,5 @@
 streamlit
 google-genai
-PyPdf2
+PyPDF2
 python-docx
+us-abase
