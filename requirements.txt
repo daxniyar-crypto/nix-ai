@@ -2,4 +2,4 @@ streamlit
 google-genai
 PyPDF2
 python-docx
-us-abase
+supabase==2.9.1
