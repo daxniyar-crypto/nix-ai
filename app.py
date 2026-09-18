@@ -1,4 +1,4 @@
-e"""
+"""
 NIX AI — Professional Gen-Z Minimalist Assistant (UI/UX Upgraded)
 -------------------------------------------------------------------
 Upgrades in this version:
