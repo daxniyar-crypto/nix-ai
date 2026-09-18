@@ -570,28 +570,6 @@ def main_app():
 
         st.markdown("---")
 
-        # --- Camera / gallery image Q&A ---
-        st.subheader("Ask about a photo")
-        img_source = st.radio("Source", ["Camera", "Gallery"], horizontal=True, key="img_source")
-        image_file = None
-        if img_source == "Camera":
-            image_file = st.camera_input("Take a photo", label_visibility="collapsed")
-        else:
-            image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"], key="img_upload")
-
-        if image_file is not None:
-            st.session_state.pending_image = image_file.getvalue()
-            st.session_state.pending_image_mime = image_file.type or "image/jpeg"
-            st.image(image_file, caption="Type your question about this photo below ⬇️", use_container_width=True)
-
-        if st.session_state.pending_image is not None:
-            if st.button("✕ Remove photo"):
-                st.session_state.pending_image = None
-                st.session_state.pending_image_mime = None
-                st.rerun()
-
-        st.markdown("---")
-
         # --- Theme toggle ---
         st.subheader("Appearance")
         theme_choice = st.radio(
@@ -634,6 +612,32 @@ def main_app():
     # Render chat history as bubbles: user on the left, assistant on the right, no avatars/icons
     for msg in st.session_state.messages:
         st.markdown(_bubble_html(msg["content"], msg["role"]), unsafe_allow_html=True)
+
+    # --- "+" attach button right above the message box (camera / gallery) ---
+    attach_col, preview_col = st.columns([1, 5])
+    with attach_col:
+        with st.popover("➕"):
+            st.caption("Attach a photo")
+            img_source = st.radio("Source", ["Camera", "Gallery"], horizontal=True, key="img_source", label_visibility="collapsed")
+            image_file = None
+            if img_source == "Camera":
+                image_file = st.camera_input("Take a photo", label_visibility="collapsed")
+            else:
+                image_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"], key="img_upload", label_visibility="collapsed")
+
+            if image_file is not None:
+                st.session_state.pending_image = image_file.getvalue()
+                st.session_state.pending_image_mime = image_file.type or "image/jpeg"
+                st.image(image_file, caption="Attached ✅ — type your question below", use_container_width=True)
+
+            if st.session_state.pending_image is not None:
+                if st.button("✕ Remove photo"):
+                    st.session_state.pending_image = None
+                    st.session_state.pending_image_mime = None
+                    st.rerun()
+    with preview_col:
+        if st.session_state.pending_image is not None:
+            st.caption("📎 Photo attached — ask your question below")
 
     user_input = st.chat_input("Type a message or query...")
     if user_input:
