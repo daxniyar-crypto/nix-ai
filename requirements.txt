@@ -3,4 +3,3 @@ google-genai
 PyPDF2
 python-docx
 supabase==2.9.1
-streamline-drawable-canvas
