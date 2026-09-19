@@ -266,6 +266,14 @@ def inject_css(theme: str):
             color: {fg};
             border-bottom-right-radius: 4px;
         }}
+        .chat-bubble h1, .chat-bubble h2, .chat-bubble h3 {{
+            font-size: 1.05rem;
+            margin: 0.4rem 0 0.3rem 0;
+            font-weight: 700 !important;
+        }}
+        .chat-bubble p {{ margin: 0.3rem 0; }}
+        .chat-bubble ul, .chat-bubble ol {{ margin: 0.3rem 0; padding-left: 1.2rem; }}
+        .chat-bubble strong {{ font-weight: 700; }}
         input, textarea {{
             background-color: {input_bg} !important;
             color: {fg} !important;
@@ -347,15 +355,18 @@ def _typewriter(text: str, delay: float = 0.012):
 
 def _bubble_html(text: str, role: str, image_data_uri: str = None) -> str:
     """Wraps text in a styled chat-bubble div (right-aligned for assistant, left for user).
+    Renders markdown (bold, headings, lists) instead of showing raw ** / ### symbols.
     If image_data_uri is given, shows the photo thumbnail above the text."""
     import html as _html
-    safe = _html.escape(text).replace("\n", "<br>") if text else ""
+    safe = _html.escape(text) if text else ""
     img_html = (
         f'<img src="{image_data_uri}" style="max-width:100%;border-radius:10px;'
         f'display:block;margin-bottom:{"6px" if safe else "0"};">'
         if image_data_uri else ""
     )
-    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}{safe}</div></div>'
+    # Blank lines around the text let Streamlit's markdown parser render **bold**,
+    # ### headings, and lists properly even though it's nested inside our div.
+    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}\n\n{safe}\n\n</div></div>'
 
 
 def _loading_bubble_html() -> str:
