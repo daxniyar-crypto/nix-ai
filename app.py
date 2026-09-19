@@ -15,6 +15,7 @@ import streamlit as st
 import random
 import time
 import base64
+import io
 import urllib.parse
 
 try:
@@ -36,6 +37,13 @@ try:
     from supabase import create_client
 except Exception:
     create_client = None
+
+try:
+    from streamlit_drawable_canvas import st_canvas
+    from PIL import Image
+except Exception:
+    st_canvas = None
+    Image = None
 
 
 # ---------------------------------------------------------------------
@@ -161,6 +169,7 @@ defaults = {
     "current_conversation_id": None,   # active conversation in Supabase
     "pending_image": None,             # bytes of an image waiting to be asked about
     "pending_image_mime": None,
+    "_raw_picked_image": None,         # bytes of a freshly picked photo, before editing
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -199,18 +208,14 @@ def inject_css(theme: str):
         }}
         .nix-title {{
             text-align: center;
-            font-size: 2.5rem;
+            font-size: 1.15rem;
             color: {title_color};
-            margin-bottom: 0;
-            font-weight: 800;
-        }}
-        .nix-sub {{
-            text-align: center;
-            color: {sub};
-            font-size: 0.95rem;
-            margin-top: 4px;
-            margin-bottom: 2rem;
-            letter-spacing: 0.05em;
+            margin: 0;
+            padding-bottom: 0.9rem;
+            margin-bottom: 1rem;
+            border-bottom: 0.5px solid {card_border};
+            font-weight: 500;
+            letter-spacing: -0.01em;
         }}
         div.stButton > button {{
             background: {btn_bg};
@@ -239,7 +244,7 @@ def inject_css(theme: str):
         .chat-row {{
             display: flex;
             width: 100%;
-            margin-bottom: 0.6rem;
+            margin-bottom: 0.45rem;
         }}
         .chat-row.user {{
             justify-content: flex-start;
@@ -249,9 +254,10 @@ def inject_css(theme: str):
         }}
         .chat-bubble {{
             max-width: 78%;
-            padding: 0.7rem 1rem;
+            padding: 0.55rem 0.85rem;
             border-radius: 14px;
             line-height: 1.5;
+            font-size: 0.92rem;
             word-wrap: break-word;
         }}
         .chat-bubble.user {{
@@ -313,7 +319,6 @@ if st.session_state.logged_in and st.session_state.name:
     st.markdown(f"<h1 class='nix-title'>Heyy {st.session_state.name} 👋🏾</h1>", unsafe_allow_html=True)
 else:
     st.markdown("<h1 class='nix-title'>NIX AI</h1>", unsafe_allow_html=True)
-st.markdown("<p class='nix-sub'>MINIMAL INTELLIGENCE // SECURE & FAST</p>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------
@@ -673,17 +678,101 @@ def main_app():
             unsafe_allow_html=True,
         )
 
-    # Message box with a built-in attach icon (📎) — tapping it on mobile opens
-    # the phone's own Camera / Photo Library picker, just like a normal chat app.
-    user_input = st.chat_input(
-        "Type a message or query...",
-        accept_file=True,
-        file_type=["jpg", "jpeg", "png"],
-    )
+    # --- "+" attach button: pick a photo, optionally mark it up or crop it, then attach ---
+    attach_col, preview_col = st.columns([1, 5])
+    with attach_col:
+        with st.popover("➕"):
+            if st.session_state.pending_image is None:
+                st.caption("Attach a photo")
+                img_source = st.radio("Source", ["Camera", "Gallery"], horizontal=True, key="img_source", label_visibility="collapsed")
+                if img_source == "Camera":
+                    picked = st.camera_input("Take a photo", label_visibility="collapsed")
+                else:
+                    picked = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"], key="img_upload", label_visibility="collapsed")
+                if picked is not None:
+                    st.session_state._raw_picked_image = picked.getvalue()
+                    st.rerun()
+            elif st.session_state.get("_raw_picked_image") and st_canvas and Image:
+                # --- Simple photo editor: mark up with a colour, or crop ---
+                raw = st.session_state._raw_picked_image
+                pil_img = Image.open(io.BytesIO(raw)).convert("RGB")
+                max_w = 320
+                if pil_img.width > max_w:
+                    ratio = max_w / pil_img.width
+                    pil_img = pil_img.resize((max_w, int(pil_img.height * ratio)))
+
+                tool = st.radio("Tool", ["Mark", "Crop"], horizontal=True, key="edit_tool")
+                colors = {
+                    "Red": "#FF3B30", "Orange": "#FF9500", "Yellow": "#FFCC00",
+                    "Green": "#34C759", "Blue": "#007AFF", "Black": "#000000", "White": "#FFFFFF",
+                }
+                color_name = st.select_slider("Colour", options=list(colors.keys()), key="edit_color")
+
+                canvas_result = st_canvas(
+                    fill_color="rgba(0,0,0,0)",
+                    stroke_width=4,
+                    stroke_color=colors[color_name],
+                    background_image=pil_img,
+                    update_streamlit=True,
+                    height=pil_img.height,
+                    width=pil_img.width,
+                    drawing_mode="freedraw" if tool == "Mark" else "rect",
+                    key="nix_canvas_edit",
+                )
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    use_it = st.button("✅ Use this photo")
+                with c2:
+                    cancel_it = st.button("✕ Cancel")
+
+                if use_it:
+                    final_img = pil_img
+                    if tool == "Crop" and canvas_result.json_data and canvas_result.json_data.get("objects"):
+                        obj = canvas_result.json_data["objects"][-1]
+                        left, top = int(obj["left"]), int(obj["top"])
+                        w = int(obj["width"] * obj.get("scaleX", 1))
+                        h = int(obj["height"] * obj.get("scaleY", 1))
+                        left, top = max(0, left), max(0, top)
+                        right = min(pil_img.width, left + w)
+                        bottom = min(pil_img.height, top + h)
+                        if right > left and bottom > top:
+                            final_img = pil_img.crop((left, top, right, bottom))
+                    elif canvas_result.image_data is not None:
+                        final_img = Image.fromarray(canvas_result.image_data.astype("uint8"), "RGBA").convert("RGB")
+
+                    buf = io.BytesIO()
+                    final_img.save(buf, format="PNG")
+                    img_bytes = buf.getvalue()
+                    st.session_state.pending_image = img_bytes
+                    st.session_state.pending_image_mime = "image/png"
+                    st.session_state._raw_picked_image = None
+                    st.rerun()
+
+                if cancel_it:
+                    st.session_state.pending_image = None
+                    st.session_state._raw_picked_image = None
+                    st.rerun()
+            else:
+                st.caption("Photo attached ✅")
+                if st.button("✕ Remove photo"):
+                    st.session_state.pending_image = None
+                    st.session_state.pending_image_mime = None
+                    st.session_state._raw_picked_image = None
+                    st.rerun()
+    with preview_col:
+        if st.session_state.pending_image is not None:
+            b64 = base64.b64encode(st.session_state.pending_image).decode("utf-8")
+            st.markdown(
+                f'<img src="data:{st.session_state.pending_image_mime};base64,{b64}" '
+                f'style="height:56px;border-radius:8px;">',
+                unsafe_allow_html=True,
+            )
+
+    user_input = st.chat_input("Type a message or query...")
 
     if user_input:
-        text = (user_input.text or "").strip()
-        files = user_input.files or []
+        text = user_input.strip()
 
         # Create a conversation in Supabase on the first message of a new chat
         if st.session_state.current_conversation_id is None and db_available():
@@ -692,13 +781,12 @@ def main_app():
                 st.session_state.phone, st.session_state.name, title
             )
 
-        display_text = text  # may be empty if the person only sent a photo
+        display_text = text
         image_data_uri = None
-        if files:
-            image_file = files[0]
-            img_bytes = image_file.getvalue()
-            mime = image_file.type or "image/jpeg"
-            image_data_uri = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+        pending_bytes = st.session_state.pending_image
+        pending_mime = st.session_state.pending_image_mime
+        if pending_bytes:
+            image_data_uri = f"data:{pending_mime};base64,{base64.b64encode(pending_bytes).decode('utf-8')}"
 
         st.session_state.messages.append(
             {"role": "user", "content": display_text, "image_data_uri": image_data_uri}
@@ -710,14 +798,15 @@ def main_app():
         placeholder = st.empty()
         placeholder.markdown(_loading_bubble_html(), unsafe_allow_html=True)
 
-        if files:
-            image_file = files[0]
+        if pending_bytes:
             reply = ask_ai_vision(
                 text or "Describe this image and answer any question in it.",
-                image_file.getvalue(),
-                image_file.type or "image/jpeg",
+                pending_bytes,
+                pending_mime or "image/jpeg",
                 stream_placeholder=placeholder,
             )
+            st.session_state.pending_image = None
+            st.session_state.pending_image_mime = None
         else:
             context = ""
             if st.session_state.doc_text:
