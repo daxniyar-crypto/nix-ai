@@ -280,6 +280,29 @@ def inject_css(theme: str):
             border-color: {input_border} !important;
             border-radius: 8px !important;
         }}
+        /* Chat input bar — rounded pill shape like Claude's app */
+        [data-testid="stChatInput"] {{
+            border-radius: 26px !important;
+            border: 1px solid {card_border} !important;
+            background-color: {card_bg} !important;
+            padding: 2px 4px !important;
+        }}
+        [data-testid="stChatInput"] textarea {{
+            background-color: transparent !important;
+            border: none !important;
+        }}
+        /* Send button — swap Streamlit's default red for a theme-matched dark button */
+        [data-testid="stChatInputSubmitButton"] {{
+            background-color: {btn_bg} !important;
+            border: 1px solid {btn_border} !important;
+            border-radius: 50% !important;
+        }}
+        [data-testid="stChatInputSubmitButton"]:hover {{
+            background-color: {btn_hover} !important;
+        }}
+        [data-testid="stChatInputSubmitButton"] svg {{
+            fill: {fg} !important;
+        }}
     </style>
     """, unsafe_allow_html=True)
 
