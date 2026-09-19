@@ -255,9 +255,9 @@ def inject_css(theme: str):
             word-wrap: break-word;
         }}
         .chat-bubble.user {{
-            background-color: {card_bg};
-            border: 1px solid {card_border};
-            color: {fg};
+            background-color: #4169E1;
+            border: 1px solid #3A5FCD;
+            color: #ffffff;
             border-bottom-left-radius: 4px;
         }}
         .chat-bubble.assistant {{
