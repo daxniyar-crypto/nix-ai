@@ -345,11 +345,17 @@ def _typewriter(text: str, delay: float = 0.012):
         time.sleep(delay)
 
 
-def _bubble_html(text: str, role: str) -> str:
-    """Wraps text in a styled chat-bubble div (right-aligned for assistant, left for user)."""
+def _bubble_html(text: str, role: str, image_data_uri: str = None) -> str:
+    """Wraps text in a styled chat-bubble div (right-aligned for assistant, left for user).
+    If image_data_uri is given, shows the photo thumbnail above the text."""
     import html as _html
-    safe = _html.escape(text).replace("\n", "<br>")
-    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{safe}</div></div>'
+    safe = _html.escape(text).replace("\n", "<br>") if text else ""
+    img_html = (
+        f'<img src="{image_data_uri}" style="max-width:100%;border-radius:10px;'
+        f'display:block;margin-bottom:{"6px" if safe else "0"};">'
+        if image_data_uri else ""
+    )
+    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}{safe}</div></div>'
 
 
 def _loading_bubble_html() -> str:
@@ -628,7 +634,10 @@ def main_app():
 
     # Render chat history as bubbles: user on the left, assistant on the right, no avatars/icons
     for msg in st.session_state.messages:
-        st.markdown(_bubble_html(msg["content"], msg["role"]), unsafe_allow_html=True)
+        st.markdown(
+            _bubble_html(msg["content"], msg["role"], msg.get("image_data_uri")),
+            unsafe_allow_html=True,
+        )
 
     # Message box with a built-in attach icon (📎) — tapping it on mobile opens
     # the phone's own Camera / Photo Library picker, just like a normal chat app.
@@ -649,10 +658,20 @@ def main_app():
                 st.session_state.phone, st.session_state.name, title
             )
 
-        display_text = text if text else "📷 [photo]"
-        st.session_state.messages.append({"role": "user", "content": display_text})
-        st.markdown(_bubble_html(display_text, "user"), unsafe_allow_html=True)
-        db_save_message(st.session_state.current_conversation_id, "user", display_text)
+        display_text = text  # may be empty if the person only sent a photo
+        image_data_uri = None
+        if files:
+            image_file = files[0]
+            img_bytes = image_file.getvalue()
+            mime = image_file.type or "image/jpeg"
+            image_data_uri = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+
+        st.session_state.messages.append(
+            {"role": "user", "content": display_text, "image_data_uri": image_data_uri}
+        )
+        st.markdown(_bubble_html(display_text, "user", image_data_uri), unsafe_allow_html=True)
+        # Photos aren't stored in the database yet — only the text is saved for history
+        db_save_message(st.session_state.current_conversation_id, "user", display_text or "[Photo]")
 
         placeholder = st.empty()
         placeholder.markdown(_loading_bubble_html(), unsafe_allow_html=True)
