@@ -542,3 +542,287 @@ def ask_ai_vision(prompt, image_bytes, mime_type="image/jpeg", stream_placeholde
             err = f"⚠️ Couldn't analyze the image: {e}"
         if stream_placeholder:
             stream_placeholder.markdown(_bubble_html(err, "assistant"), unsafe_allow_html=True)
+        return err
+
+
+# ---------------------------------------------------------------------
+# LOGIN PAGE
+# ---------------------------------------------------------------------
+def login_page():
+    st.subheader("Authentication")
+    st.markdown("<p style='font-size: 0.85rem; opacity: 0.7;'>Enter your mobile number to initialize session.</p>", unsafe_allow_html=True)
+
+    if not st.session_state.otp_sent:
+        name = st.text_input("Your Name", placeholder="e.g. Rohan")
+        phone = st.text_input("Phone Number", max_chars=10, placeholder="9876543210")
+        if st.button("Generate OTP"):
+            if not name.strip():
+                st.error("Please enter your name.")
+            elif phone.isdigit() and len(phone) == 10:
+                st.session_state.name = name.strip()
+                st.session_state.phone = phone
+                st.session_state.otp = generate_otp()
+                st.session_state.otp_time = time.time()
+                st.session_state.otp_sent = True
+                st.rerun()
+            else:
+                st.error("Please enter a valid 10-digit number.")
+    else:
+        st.info(f"OTP dispatched to +91 {st.session_state.phone}")
+        st.success(f"Development OTP: {st.session_state.otp}")
+
+        entered = st.text_input("Enter 6-digit OTP", max_chars=6)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Verify"):
+                if time.time() - st.session_state.otp_time > OTP_VALID_SECONDS:
+                    st.error("OTP expired. Please resend.")
+                    st.session_state.otp_sent = False
+                elif entered == st.session_state.otp:
+                    st.session_state.logged_in = True
+                    st.rerun()
+                else:
+                    st.error("Invalid OTP.")
+        with col2:
+            if st.button("Resend OTP"):
+                st.session_state.otp = generate_otp()
+                st.session_state.otp_time = time.time()
+                st.rerun()
+
+    # --- Help / contact section ---
+    whatsapp_number = "918822166691"  # +91 8822166691, no "+" or spaces for wa.me links
+    whatsapp_message = "Hey Niyar, I need help with NIX AI 🙏"
+    wa_link = f"https://wa.me/{whatsapp_number}?text={urllib.parse.quote(whatsapp_message)}"
+
+    st.markdown(f"""
+    <div style='text-align:center; font-size:0.8rem; opacity:0.65; margin-top:2.5rem; line-height:1.6;'>
+        For any kind of help, contact us —<br>
+        <a href="mailto:niyardaxx@gmail.com" style="color:inherit; text-decoration:underline;">niyardaxx@gmail.com</a>
+        &nbsp;or&nbsp;
+        <a href="{wa_link}" target="_blank" style="color:inherit; text-decoration:underline;">+91 88221 66691</a>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------
+# MAIN APP
+# ---------------------------------------------------------------------
+def main_app():
+    with st.sidebar:
+        # --- Chat history: new chat + past conversations ---
+        st.subheader("Chats")
+        if st.button("➕ New Chat"):
+            st.session_state.messages = []
+            st.session_state.current_conversation_id = None
+            st.rerun()
+
+        if db_available():
+            convos = db_list_conversations(st.session_state.phone)
+            if not convos:
+                st.caption("No past chats yet.")
+            for c in convos:
+                label = c.get("title") or "Untitled chat"
+                is_active = c["id"] == st.session_state.current_conversation_id
+                if st.button(("• " if is_active else "") + label, key=f"conv_{c['id']}"):
+                    st.session_state.current_conversation_id = c["id"]
+                    st.session_state.messages = db_load_messages(c["id"])
+                    st.rerun()
+        else:
+            st.caption("Chat history needs Supabase SUPABASE_URL / SUPABASE_KEY in Secrets.")
+
+        st.markdown("---")
+
+        # --- Theme toggle ---
+        st.subheader("Appearance")
+        theme_choice = st.radio(
+            "Theme", ["dark", "light"],
+            index=0 if st.session_state.theme == "dark" else 1,
+            horizontal=True,
+        )
+        if theme_choice != st.session_state.theme:
+            st.session_state.theme = theme_choice
+            st.rerun()
+
+        st.markdown("---")
+        st.subheader("Document Context")
+        uploaded = st.file_uploader("Upload reference file", type=["txt", "pdf", "docx"])
+
+        if uploaded is not None:
+            text = extract_text(uploaded)
+            if text:
+                st.session_state.doc_text = text
+                st.session_state.doc_name = uploaded.name
+                st.success(f"Loaded: {uploaded.name} ({len(text)} chars)")
+                if st.button("Summarize Document"):
+                    with st.spinner("Analyzing document..."):
+                        st.markdown("### Summary")
+                        summary_placeholder = st.empty()
+                        ask_ai(
+                            "Provide a clean, concise summary of this document in bullet points:",
+                            system_context=text[:12000],
+                            stream_placeholder=summary_placeholder,
+                        )
+            else:
+                st.error("Failed to parse file.")
+
+        st.markdown("---")
+        if st.button("Terminate Session"):
+            for k, v in defaults.items():
+                st.session_state[k] = v
+            st.rerun()
+
+    # Render chat history as bubbles: user on the left, assistant on the right, no avatars/icons
+    for msg in st.session_state.messages:
+        st.markdown(
+            _bubble_html(msg["content"], msg["role"], msg.get("image_data_uri")),
+            unsafe_allow_html=True,
+        )
+
+    # --- "+" attach button: pick a photo, optionally mark it up or crop it, then attach ---
+    attach_col, preview_col = st.columns([1, 5])
+    with attach_col:
+        with st.popover("➕"):
+            if st.session_state.pending_image is None:
+                st.caption("Attach a photo")
+                img_source = st.radio("Source", ["Camera", "Gallery"], horizontal=True, key="img_source", label_visibility="collapsed")
+                if img_source == "Camera":
+                    picked = st.camera_input("Take a photo", label_visibility="collapsed")
+                else:
+                    picked = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"], key="img_upload", label_visibility="collapsed")
+                if picked is not None:
+                    st.session_state._raw_picked_image = picked.getvalue()
+                    st.rerun()
+            elif st.session_state.get("_raw_picked_image") and Image:
+                # --- Simple photo editor: crop with sliders, or mark with a coloured dot ---
+                raw = st.session_state._raw_picked_image
+                base_img = Image.open(io.BytesIO(raw)).convert("RGB")
+                max_w = 320
+                if base_img.width > max_w:
+                    ratio = max_w / base_img.width
+                    base_img = base_img.resize((max_w, int(base_img.height * ratio)))
+                W, H = base_img.size
+
+                tool = st.radio("Tool", ["Crop", "Mark"], horizontal=True, key="edit_tool")
+                colors = {
+                    "Red": "#FF3B30", "Orange": "#FF9500", "Yellow": "#FFCC00",
+                    "Green": "#34C759", "Blue": "#007AFF", "Black": "#000000", "White": "#FFFFFF",
+                }
+                color_name = st.select_slider("Colour", options=list(colors.keys()), key="edit_color")
+
+                if "_marks" not in st.session_state:
+                    st.session_state._marks = []
+
+                if tool == "Crop":
+                    left = st.slider("Left", 0, W - 10, 0, key="crop_left")
+                    top = st.slider("Top", 0, H - 10, 0, key="crop_top")
+                    right = st.slider("Right", left + 10, W, W, key="crop_right")
+                    bottom = st.slider("Bottom", top + 10, H, H, key="crop_bottom")
+                    preview = base_img.crop((left, top, right, bottom))
+                else:
+                    x_pct = st.slider("Mark X", 0, 100, 50, key="mark_x")
+                    y_pct = st.slider("Mark Y", 0, 100, 50, key="mark_y")
+                    if st.button("📍 Add mark"):
+                        st.session_state._marks.append((x_pct, y_pct, colors[color_name]))
+                    if st.session_state._marks and st.button("↩️ Undo last mark"):
+                        st.session_state._marks.pop()
+                    preview = base_img.copy()
+                    draw = ImageDraw.Draw(preview)
+                    r = 8
+                    for mx, my, mcol in st.session_state._marks:
+                        px, py = int(W * mx / 100), int(H * my / 100)
+                        draw.ellipse((px - r, py - r, px + r, py + r), outline=mcol, width=4)
+
+                st.image(preview, use_container_width=True)
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    use_it = st.button("✅ Use this photo")
+                with c2:
+                    cancel_it = st.button("✕ Cancel")
+
+                if use_it:
+                    buf = io.BytesIO()
+                    preview.save(buf, format="PNG")
+                    img_bytes = buf.getvalue()
+                    st.session_state.pending_image = img_bytes
+                    st.session_state.pending_image_mime = "image/png"
+                    st.session_state._raw_picked_image = None
+                    st.session_state._marks = []
+                    st.rerun()
+
+                if cancel_it:
+                    st.session_state.pending_image = None
+                    st.session_state._raw_picked_image = None
+                    st.session_state._marks = []
+                    st.rerun()
+            else:
+                st.caption("Photo attached ✅")
+                if st.button("✕ Remove photo"):
+                    st.session_state.pending_image = None
+                    st.session_state.pending_image_mime = None
+                    st.session_state._raw_picked_image = None
+                    st.rerun()
+    with preview_col:
+        if st.session_state.pending_image is not None:
+            b64 = base64.b64encode(st.session_state.pending_image).decode("utf-8")
+            st.markdown(
+                f'<img src="data:{st.session_state.pending_image_mime};base64,{b64}" '
+                f'style="height:56px;border-radius:8px;">',
+                unsafe_allow_html=True,
+            )
+
+    user_input = st.chat_input("Type a message or query...")
+
+    if user_input:
+        text = user_input.strip()
+
+        # Create a conversation in Supabase on the first message of a new chat
+        if st.session_state.current_conversation_id is None and db_available():
+            title = (text or "Photo question")[:40]
+            st.session_state.current_conversation_id = db_create_conversation(
+                st.session_state.phone, st.session_state.name, title
+            )
+
+        display_text = text
+        image_data_uri = None
+        pending_bytes = st.session_state.pending_image
+        pending_mime = st.session_state.pending_image_mime
+        if pending_bytes:
+            image_data_uri = f"data:{pending_mime};base64,{base64.b64encode(pending_bytes).decode('utf-8')}"
+
+        st.session_state.messages.append(
+            {"role": "user", "content": display_text, "image_data_uri": image_data_uri}
+        )
+        st.markdown(_bubble_html(display_text, "user", image_data_uri), unsafe_allow_html=True)
+        # Photos aren't stored in the database yet — only the text is saved for history
+        db_save_message(st.session_state.current_conversation_id, "user", display_text or "[Photo]")
+
+        placeholder = st.empty()
+        placeholder.markdown(_loading_bubble_html(), unsafe_allow_html=True)
+
+        if pending_bytes:
+            reply = ask_ai_vision(
+                text or "Describe this image and answer any question in it.",
+                pending_bytes,
+                pending_mime or "image/jpeg",
+                stream_placeholder=placeholder,
+            )
+            st.session_state.pending_image = None
+            st.session_state.pending_image_mime = None
+        else:
+            context = ""
+            if st.session_state.doc_text:
+                context = f"Reference Document:\n{st.session_state.doc_text[:8000]}"
+            reply = ask_ai(text, system_context=context, stream_placeholder=placeholder)
+
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        db_save_message(st.session_state.current_conversation_id, "assistant", reply)
+
+
+# ---------------------------------------------------------------------
+# ROUTING
+# ---------------------------------------------------------------------
+if not st.session_state.logged_in:
+    login_page()
+else:
+    main_app()
