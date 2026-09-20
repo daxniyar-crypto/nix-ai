@@ -309,6 +309,18 @@ def inject_css(theme: str):
         [data-testid="stChatInputSubmitButton"] svg {{
             fill: {fg} !important;
         }}
+        /* Attached photo preview chip — hide filename/size text, keep a clean bigger thumbnail */
+        [data-testid="stChatInputFile"] p,
+        [data-testid="stChatInputFile"] small,
+        [data-testid="stChatInputFile"] span:not(:has(svg)) {{
+            display: none !important;
+        }}
+        [data-testid="stChatInputFile"] img {{
+            width: 64px !important;
+            height: 64px !important;
+            object-fit: cover !important;
+            border-radius: 10px !important;
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -678,103 +690,17 @@ def main_app():
             unsafe_allow_html=True,
         )
 
-    # --- "+" attach button: pick a photo, optionally mark it up or crop it, then attach ---
-    attach_col, preview_col = st.columns([1, 5])
-    with attach_col:
-        with st.popover("➕"):
-            if st.session_state.pending_image is None:
-                st.caption("Attach a photo")
-                img_source = st.radio("Source", ["Camera", "Gallery"], horizontal=True, key="img_source", label_visibility="collapsed")
-                if img_source == "Camera":
-                    picked = st.camera_input("Take a photo", label_visibility="collapsed")
-                else:
-                    picked = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"], key="img_upload", label_visibility="collapsed")
-                if picked is not None:
-                    st.session_state._raw_picked_image = picked.getvalue()
-                    st.rerun()
-            elif st.session_state.get("_raw_picked_image") and Image:
-                # --- Simple photo editor: crop with sliders, or mark with a coloured dot ---
-                raw = st.session_state._raw_picked_image
-                base_img = Image.open(io.BytesIO(raw)).convert("RGB")
-                max_w = 320
-                if base_img.width > max_w:
-                    ratio = max_w / base_img.width
-                    base_img = base_img.resize((max_w, int(base_img.height * ratio)))
-                W, H = base_img.size
-
-                tool = st.radio("Tool", ["Crop", "Mark"], horizontal=True, key="edit_tool")
-                colors = {
-                    "Red": "#FF3B30", "Orange": "#FF9500", "Yellow": "#FFCC00",
-                    "Green": "#34C759", "Blue": "#007AFF", "Black": "#000000", "White": "#FFFFFF",
-                }
-                color_name = st.select_slider("Colour", options=list(colors.keys()), key="edit_color")
-
-                if "_marks" not in st.session_state:
-                    st.session_state._marks = []
-
-                if tool == "Crop":
-                    left = st.slider("Left", 0, W - 10, 0, key="crop_left")
-                    top = st.slider("Top", 0, H - 10, 0, key="crop_top")
-                    right = st.slider("Right", left + 10, W, W, key="crop_right")
-                    bottom = st.slider("Bottom", top + 10, H, H, key="crop_bottom")
-                    preview = base_img.crop((left, top, right, bottom))
-                else:
-                    x_pct = st.slider("Mark X", 0, 100, 50, key="mark_x")
-                    y_pct = st.slider("Mark Y", 0, 100, 50, key="mark_y")
-                    if st.button("📍 Add mark"):
-                        st.session_state._marks.append((x_pct, y_pct, colors[color_name]))
-                    if st.session_state._marks and st.button("↩️ Undo last mark"):
-                        st.session_state._marks.pop()
-                    preview = base_img.copy()
-                    draw = ImageDraw.Draw(preview)
-                    r = 8
-                    for mx, my, mcol in st.session_state._marks:
-                        px, py = int(W * mx / 100), int(H * my / 100)
-                        draw.ellipse((px - r, py - r, px + r, py + r), outline=mcol, width=4)
-
-                st.image(preview, use_container_width=True)
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    use_it = st.button("✅ Use this photo")
-                with c2:
-                    cancel_it = st.button("✕ Cancel")
-
-                if use_it:
-                    buf = io.BytesIO()
-                    preview.save(buf, format="PNG")
-                    img_bytes = buf.getvalue()
-                    st.session_state.pending_image = img_bytes
-                    st.session_state.pending_image_mime = "image/png"
-                    st.session_state._raw_picked_image = None
-                    st.session_state._marks = []
-                    st.rerun()
-
-                if cancel_it:
-                    st.session_state.pending_image = None
-                    st.session_state._raw_picked_image = None
-                    st.session_state._marks = []
-                    st.rerun()
-            else:
-                st.caption("Photo attached ✅")
-                if st.button("✕ Remove photo"):
-                    st.session_state.pending_image = None
-                    st.session_state.pending_image_mime = None
-                    st.session_state._raw_picked_image = None
-                    st.rerun()
-    with preview_col:
-        if st.session_state.pending_image is not None:
-            b64 = base64.b64encode(st.session_state.pending_image).decode("utf-8")
-            st.markdown(
-                f'<img src="data:{st.session_state.pending_image_mime};base64,{b64}" '
-                f'style="height:56px;border-radius:8px;">',
-                unsafe_allow_html=True,
-            )
-
-    user_input = st.chat_input("Type a message or query...")
+    # Message box with a built-in attach icon — tapping it on mobile opens the
+    # phone's own native Camera / Photo Library picker, just like a normal chat app.
+    user_input = st.chat_input(
+        "Type a message or query...",
+        accept_file=True,
+        file_type=["jpg", "jpeg", "png"],
+    )
 
     if user_input:
-        text = user_input.strip()
+        text = (user_input.text or "").strip()
+        files = user_input.files or []
 
         # Create a conversation in Supabase on the first message of a new chat
         if st.session_state.current_conversation_id is None and db_available():
@@ -783,11 +709,14 @@ def main_app():
                 st.session_state.phone, st.session_state.name, title
             )
 
-        display_text = text
+        display_text = text  # may be empty if the person only sent a photo
         image_data_uri = None
-        pending_bytes = st.session_state.pending_image
-        pending_mime = st.session_state.pending_image_mime
-        if pending_bytes:
+        pending_bytes = None
+        pending_mime = None
+        if files:
+            image_file = files[0]
+            pending_bytes = image_file.getvalue()
+            pending_mime = image_file.type or "image/jpeg"
             image_data_uri = f"data:{pending_mime};base64,{base64.b64encode(pending_bytes).decode('utf-8')}"
 
         st.session_state.messages.append(
@@ -804,11 +733,9 @@ def main_app():
             reply = ask_ai_vision(
                 text or "Describe this image and answer any question in it.",
                 pending_bytes,
-                pending_mime or "image/jpeg",
+                pending_mime,
                 stream_placeholder=placeholder,
             )
-            st.session_state.pending_image = None
-            st.session_state.pending_image_mime = None
         else:
             context = ""
             if st.session_state.doc_text:
