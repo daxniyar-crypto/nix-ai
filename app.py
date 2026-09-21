@@ -151,6 +151,15 @@ def db_delete_conversation(conversation_id):
         pass
 
 
+def db_rename_conversation(conversation_id, new_title):
+    if not db_available() or not conversation_id or not new_title:
+        return
+    try:
+        sb.table("conversations").update({"title": new_title}).eq("id", conversation_id).execute()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------
 # SESSION STATE
 # ---------------------------------------------------------------------
@@ -280,6 +289,27 @@ def inject_css(theme: str):
         .chat-bubble p {{ margin: 0.3rem 0; }}
         .chat-bubble ul, .chat-bubble ol {{ margin: 0.3rem 0; padding-left: 1.2rem; }}
         .chat-bubble strong {{ font-weight: 700; }}
+        .chat-bubble pre {{
+            background-color: #0b0f19;
+            border: 1px solid #1f2937;
+            border-radius: 8px;
+            padding: 0.6rem 0.7rem;
+            overflow-x: auto;
+            margin: 0.4rem 0;
+        }}
+        .chat-bubble pre code {{
+            background: none;
+            color: #e2e8f0;
+            font-size: 0.8rem;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }}
+        .chat-bubble code {{
+            background-color: rgba(148, 163, 184, 0.18);
+            border-radius: 4px;
+            padding: 0.1rem 0.3rem;
+            font-size: 0.85em;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }}
         input, textarea {{
             background-color: {input_bg} !important;
             color: {fg} !important;
@@ -404,9 +434,18 @@ def _bubble_html(text: str, role: str, image_data_uri: str = None) -> str:
         f'display:block;margin-bottom:{"6px" if safe else "0"};">'
         if image_data_uri else ""
     )
+    copy_html = ""
+    if role == "assistant" and text:
+        encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        copy_html = (
+            f'<div style="text-align:right;margin-top:2px;">'
+            f'<span onclick="navigator.clipboard.writeText(atob(\'{encoded}\'));'
+            f"this.innerText='Copied ✓';setTimeout(()=>{{this.innerText='📋 Copy'}},1200);\" "
+            f'style="cursor:pointer;font-size:0.7rem;opacity:0.55;user-select:none;">📋 Copy</span></div>'
+        )
     # Blank lines around the text let Streamlit's markdown parser render **bold**,
     # ### headings, and lists properly even though it's nested inside our div.
-    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}\n\n{safe}\n\n</div></div>'
+    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}\n\n{safe}\n\n{copy_html}</div></div>'
 
 
 def _loading_bubble_html() -> str:
@@ -635,10 +674,28 @@ def main_app():
             for c in convos:
                 label = c.get("title") or "Untitled chat"
                 is_active = c["id"] == st.session_state.current_conversation_id
-                if st.button(("• " if is_active else "") + label, key=f"conv_{c['id']}"):
-                    st.session_state.current_conversation_id = c["id"]
-                    st.session_state.messages = db_load_messages(c["id"])
-                    st.rerun()
+                col_t, col_r, col_d = st.columns([5, 1, 1])
+                with col_t:
+                    if st.button(("• " if is_active else "") + label, key=f"conv_{c['id']}"):
+                        st.session_state.current_conversation_id = c["id"]
+                        st.session_state.messages = db_load_messages(c["id"])
+                        st.rerun()
+                with col_r:
+                    if st.button("✏️", key=f"ren_{c['id']}"):
+                        st.session_state[f"_renaming_{c['id']}"] = not st.session_state.get(f"_renaming_{c['id']}", False)
+                with col_d:
+                    if st.button("🗑️", key=f"del_{c['id']}"):
+                        db_delete_conversation(c["id"])
+                        if st.session_state.current_conversation_id == c["id"]:
+                            st.session_state.current_conversation_id = None
+                            st.session_state.messages = []
+                        st.rerun()
+                if st.session_state.get(f"_renaming_{c['id']}"):
+                    new_name = st.text_input("New name", value=label, key=f"newname_{c['id']}", label_visibility="collapsed")
+                    if st.button("Save name", key=f"savename_{c['id']}"):
+                        db_rename_conversation(c["id"], new_name.strip() or label)
+                        st.session_state[f"_renaming_{c['id']}"] = False
+                        st.rerun()
         else:
             st.caption("Chat history needs Supabase SUPABASE_URL / SUPABASE_KEY in Secrets.")
 
@@ -690,6 +747,22 @@ def main_app():
             unsafe_allow_html=True,
         )
 
+    # Quick-start suggestions — only shown on a fresh, empty chat
+    quick_prompt = None
+    if not st.session_state.messages:
+        st.caption("Try asking:")
+        suggestions = [
+            "Summarize this for me",
+            "Explain like I'm 5",
+            "Write a short email",
+            "Give me 3 startup ideas",
+        ]
+        qcols = st.columns(2)
+        for i, s in enumerate(suggestions):
+            with qcols[i % 2]:
+                if st.button(s, key=f"quick_{i}", use_container_width=True):
+                    quick_prompt = s
+
     # Message box with a built-in attach icon — tapping it on mobile opens the
     # phone's own native Camera / Photo Library picker, just like a normal chat app.
     user_input = st.chat_input(
@@ -698,9 +771,17 @@ def main_app():
         file_type=["jpg", "jpeg", "png"],
     )
 
+    effective_text = None
+    effective_files = []
     if user_input:
-        text = (user_input.text or "").strip()
-        files = user_input.files or []
+        effective_text = (user_input.text or "").strip()
+        effective_files = user_input.files or []
+    elif quick_prompt:
+        effective_text = quick_prompt
+
+    if effective_text or effective_files:
+        text = effective_text or ""
+        files = effective_files
 
         # Create a conversation in Supabase on the first message of a new chat
         if st.session_state.current_conversation_id is None and db_available():
