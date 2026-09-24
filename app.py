@@ -16,6 +16,9 @@ import random
 import time
 import base64
 import io
+import hashlib
+import secrets
+import string
 import urllib.parse
 
 try:
@@ -160,25 +163,69 @@ def db_rename_conversation(conversation_id, new_title):
         pass
 
 
+def db_get_user(phone):
+    if not db_available():
+        return None
+    try:
+        res = sb.table("users").select("*").eq("phone", phone).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
+
+
+def db_create_user(phone, name, password_hash):
+    if not db_available():
+        return None
+    try:
+        res = sb.table("users").insert(
+            {"phone": phone, "name": name, "password_hash": password_hash}
+        ).execute()
+        return res.data[0] if res.data else None
+    except Exception:
+        return None
+
+
+def _hash_password(password: str, salt: str = None) -> str:
+    """PBKDF2 hash using only Python's stdlib — no extra package needed."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100_000)
+    return f"{salt}${digest.hex()}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        salt, _ = stored.split("$", 1)
+    except Exception:
+        return False
+    return secrets.compare_digest(_hash_password(password, salt), stored)
+
+
+def _generate_strong_password(length: int = 12) -> str:
+    alphabet = string.ascii_letters + string.digits + "!@#$%*"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
 # ---------------------------------------------------------------------
 # SESSION STATE
 # ---------------------------------------------------------------------
 defaults = {
     "logged_in": False,
-    "otp": None,
-    "otp_time": None,
     "phone": "",
     "name": "",
-    "otp_sent": False,
     "messages": [],
     "doc_text": "",
     "doc_name": "",
     "theme": "dark",              # theme toggle state
+    "ai_tone": "Professional",    # AI personality/tone
     "current_conversation_id": None,   # active conversation in Supabase
     "pending_image": None,             # bytes of an image waiting to be asked about
     "pending_image_mime": None,
     "_raw_picked_image": None,         # bytes of a freshly picked photo, before editing
     "_marks": [],                      # colour-mark dots placed on the photo being edited
+    "_suggested_pw": "",               # last auto-suggested signup password
+    "_regenerate_now": False,          # flag to regenerate the last AI reply
+    "_regen_index": None,              # index of the assistant message being regenerated
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -413,6 +460,19 @@ def _with_retry(fn, max_attempts=4, base_delay=1.0):
     raise last_err
 
 
+FOUNDER_ANSWER = "Yo 👋 I was built by NIYAR DAS — the mastermind behind NIX AI"
+_FOUNDER_PATTERNS = [
+    "who created you", "who made you", "who is your founder", "who's your founder",
+    "your founder", "who developed you", "who built you", "who owns you",
+    "your creator", "who is your creator", "who's your creator",
+]
+
+
+def _is_founder_question(text: str) -> bool:
+    t = (text or "").lower()
+    return any(p in t for p in _FOUNDER_PATTERNS)
+
+
 def _typewriter(text: str, delay: float = 0.012):
     """Generator that yields the reply word by word for a streaming/typewriter effect."""
     words = text.split(" ")
@@ -478,13 +538,28 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
             stream_placeholder.markdown(_bubble_html(msg, "assistant"), unsafe_allow_html=True)
         return msg
 
+    # Founder/creator questions always get this exact answer — no need to call the API
+    if _is_founder_question(prompt):
+        if stream_placeholder:
+            for partial in _typewriter(FOUNDER_ANSWER):
+                stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
+            stream_placeholder.markdown(_bubble_html(FOUNDER_ANSWER, "assistant"), unsafe_allow_html=True)
+        return FOUNDER_ANSWER
+
     # Build a plain-text transcript for context (used by both API paths below)
     transcript = ""
     for m in st.session_state.messages[:-1]:
         speaker = "User" if m["role"] == "user" else "Assistant"
         transcript += f"{speaker}: {m['content']}\n"
 
-    full_prompt = ""
+    tone_instructions = {
+        "Professional": "Respond in a clear, professional, and concise tone.",
+        "Casual / Gen-Z": "Respond in a casual, relaxed, Gen-Z tone — friendly and natural, like texting a friend.",
+        "Explain Simply": "Explain things in the simplest possible way, like to a beginner, avoiding jargon.",
+    }
+    tone = tone_instructions.get(st.session_state.get("ai_tone", "Professional"), tone_instructions["Professional"])
+
+    full_prompt = f"Style instruction: {tone}\n\n"
     if system_context:
         full_prompt += f"Context:\n{system_context}\n\n"
     if transcript:
@@ -601,44 +676,61 @@ def ask_ai_vision(prompt, image_bytes, mime_type="image/jpeg", stream_placeholde
 # ---------------------------------------------------------------------
 def login_page():
     st.subheader("Authentication")
-    st.markdown("<p style='font-size: 0.85rem; opacity: 0.7;'>Enter your mobile number to initialize session.</p>", unsafe_allow_html=True)
+    mode = st.radio("Mode", ["Log in", "Sign up"], horizontal=True, label_visibility="collapsed", key="auth_mode")
 
-    if not st.session_state.otp_sent:
-        name = st.text_input("Your Name", placeholder="e.g. Rohan")
-        phone = st.text_input("Phone Number", max_chars=10, placeholder="9876543210")
-        if st.button("Generate OTP"):
+    if mode == "Sign up":
+        name = st.text_input("Your Name", placeholder="e.g. Rohan", key="su_name")
+        phone = st.text_input("Phone Number", max_chars=10, placeholder="9876543210", key="su_phone")
+
+        if "su_password" not in st.session_state:
+            st.session_state.su_password = ""
+
+        pw_col, btn_col = st.columns([4, 1])
+        with pw_col:
+            password = st.text_input("Password", type="password", key="su_password")
+        with btn_col:
+            st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
+            if st.button("🔑", help="Suggest a strong password"):
+                st.session_state.su_password = _generate_strong_password()
+                st.rerun()
+
+        if st.session_state.su_password:
+            st.caption(f"Password: `{st.session_state.su_password}` — feel free to edit it above.")
+
+        if st.button("Create account"):
             if not name.strip():
                 st.error("Please enter your name.")
-            elif phone.isdigit() and len(phone) == 10:
+            elif not (phone.isdigit() and len(phone) == 10):
+                st.error("Please enter a valid 10-digit number.")
+            elif len(password) < 4:
+                st.error("Password should be at least 4 characters.")
+            elif not db_available():
+                st.error("Sign up needs Supabase set up (SUPABASE_URL / SUPABASE_KEY in Secrets).")
+            elif db_get_user(phone):
+                st.error("This phone number is already registered. Please log in instead.")
+            else:
+                db_create_user(phone, name.strip(), _hash_password(password))
                 st.session_state.name = name.strip()
                 st.session_state.phone = phone
-                st.session_state.otp = generate_otp()
-                st.session_state.otp_time = time.time()
-                st.session_state.otp_sent = True
+                st.session_state.logged_in = True
+                st.session_state.su_password = ""
                 st.rerun()
-            else:
-                st.error("Please enter a valid 10-digit number.")
-    else:
-        st.info(f"OTP dispatched to +91 {st.session_state.phone}")
-        st.success(f"Development OTP: {st.session_state.otp}")
 
-        entered = st.text_input("Enter 6-digit OTP", max_chars=6)
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Verify"):
-                if time.time() - st.session_state.otp_time > OTP_VALID_SECONDS:
-                    st.error("OTP expired. Please resend.")
-                    st.session_state.otp_sent = False
-                elif entered == st.session_state.otp:
+    else:  # Log in
+        phone = st.text_input("Phone Number", max_chars=10, placeholder="9876543210", key="li_phone")
+        password = st.text_input("Password", type="password", key="li_password")
+        if st.button("Log in"):
+            if not db_available():
+                st.error("Login needs Supabase set up (SUPABASE_URL / SUPABASE_KEY in Secrets).")
+            else:
+                user = db_get_user(phone)
+                if not user or not _verify_password(password, user.get("password_hash", "")):
+                    st.error("Incorrect phone number or password.")
+                else:
+                    st.session_state.name = user.get("name", "")
+                    st.session_state.phone = phone
                     st.session_state.logged_in = True
                     st.rerun()
-                else:
-                    st.error("Invalid OTP.")
-        with col2:
-            if st.button("Resend OTP"):
-                st.session_state.otp = generate_otp()
-                st.session_state.otp_time = time.time()
-                st.rerun()
 
     # --- Help / contact section ---
     whatsapp_number = "918822166691"  # +91 8822166691, no "+" or spaces for wa.me links
@@ -712,6 +804,15 @@ def main_app():
             st.session_state.theme = theme_choice
             st.rerun()
 
+        tone_options = ["Professional", "Casual / Gen-Z", "Explain Simply"]
+        tone_choice = st.selectbox(
+            "AI tone",
+            tone_options,
+            index=tone_options.index(st.session_state.get("ai_tone", "Professional")),
+        )
+        if tone_choice != st.session_state.ai_tone:
+            st.session_state.ai_tone = tone_choice
+
         st.markdown("---")
         st.subheader("Document Context")
         uploaded = st.file_uploader("Upload reference file", type=["txt", "pdf", "docx"])
@@ -740,12 +841,61 @@ def main_app():
                 st.session_state[k] = v
             st.rerun()
 
+    # --- Handle a pending "regenerate" request from a previous rerun ---
+    if st.session_state.get("_regen_index") is not None:
+        idx = st.session_state._regen_index
+        st.session_state._regen_index = None
+        if 0 <= idx < len(st.session_state.messages) and st.session_state.messages[idx]["role"] == "assistant":
+            prev_user_msg = None
+            for j in range(idx - 1, -1, -1):
+                if st.session_state.messages[j]["role"] == "user":
+                    prev_user_msg = st.session_state.messages[j]
+                    break
+            if prev_user_msg is not None:
+                with st.spinner("Regenerating..."):
+                    img_uri = prev_user_msg.get("image_data_uri")
+                    if img_uri:
+                        try:
+                            header, b64data = img_uri.split(",", 1)
+                            mime = header.split(";")[0].replace("data:", "")
+                            img_bytes = base64.b64decode(b64data)
+                            new_reply = ask_ai_vision(
+                                prev_user_msg["content"] or "Describe this image and answer any question in it.",
+                                img_bytes, mime,
+                            )
+                        except Exception:
+                            new_reply = ask_ai(prev_user_msg["content"])
+                    else:
+                        new_reply = ask_ai(prev_user_msg["content"])
+                st.session_state.messages[idx]["content"] = new_reply
+                st.session_state.messages[idx]["reaction"] = None
+
     # Render chat history as bubbles: user on the left, assistant on the right, no avatars/icons
-    for msg in st.session_state.messages:
+    for i, msg in enumerate(st.session_state.messages):
         st.markdown(
             _bubble_html(msg["content"], msg["role"], msg.get("image_data_uri")),
             unsafe_allow_html=True,
         )
+        if msg["role"] == "assistant":
+            st.markdown(
+                "<div style='text-align:right;font-size:0.68rem;opacity:0.45;"
+                "margin-top:-4px;margin-bottom:2px;'>NIX is AI and can make mistakes</div>",
+                unsafe_allow_html=True,
+            )
+            rcol1, rcol2, rcol3, _rspacer = st.columns([1, 1, 1, 9])
+            reacted = msg.get("reaction")
+            with rcol1:
+                if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}"):
+                    st.session_state.messages[i]["reaction"] = "up"
+                    st.rerun()
+            with rcol2:
+                if st.button("👎" if reacted != "down" else "✅", key=f"down_{i}"):
+                    st.session_state.messages[i]["reaction"] = "down"
+                    st.rerun()
+            with rcol3:
+                if st.button("🔄", key=f"regen_{i}", help="Regenerate this reply"):
+                    st.session_state._regen_index = i
+                    st.rerun()
 
     # Quick-start suggestions — only shown on a fresh, empty chat
     quick_prompt = None
@@ -825,6 +975,7 @@ def main_app():
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
         db_save_message(st.session_state.current_conversation_id, "assistant", reply)
+        st.rerun()
 
 
 # ---------------------------------------------------------------------
