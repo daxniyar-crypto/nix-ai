@@ -505,18 +505,9 @@ def _bubble_html(text: str, role: str, image_data_uri: str = None) -> str:
         f'display:block;margin-bottom:{"6px" if safe else "0"};">'
         if image_data_uri else ""
     )
-    copy_html = ""
-    if role == "assistant" and text:
-        encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        copy_html = (
-            f'<div style="text-align:right;margin-top:2px;">'
-            f'<span onclick="navigator.clipboard.writeText(atob(\'{encoded}\'));'
-            f"this.innerText='Copied ✓';setTimeout(()=>{{this.innerText='📋 Copy'}},1200);\" "
-            f'style="cursor:pointer;font-size:0.7rem;opacity:0.55;user-select:none;">📋 Copy</span></div>'
-        )
     # Blank lines around the text let Streamlit's markdown parser render **bold**,
     # ### headings, and lists properly even though it's nested inside our div.
-    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}\n\n{safe}\n\n{copy_html}</div></div>'
+    return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}\n\n{safe}\n\n</div></div>'
 
 
 def _loading_bubble_html() -> str:
@@ -901,17 +892,26 @@ def main_app():
                 "margin-top:-4px;margin-bottom:2px;'>NIX is AI and can make mistakes</div>",
                 unsafe_allow_html=True,
             )
-            rcol1, rcol2, rcol3, _rspacer = st.columns([1, 1, 1, 9])
+            _rspacer, rcol_copy, rcol_up, rcol_down, rcol_regen = st.columns([8, 1, 1, 1, 1])
             reacted = msg.get("reaction")
-            with rcol1:
+            with rcol_copy:
+                encoded = base64.b64encode((msg["content"] or "").encode("utf-8")).decode("ascii")
+                st.markdown(
+                    f'<div style="text-align:center;padding-top:6px;">'
+                    f'<span onclick="navigator.clipboard.writeText(atob(\'{encoded}\'));'
+                    f"this.innerText='✅';setTimeout(()=>{{this.innerText='📋'}},1000);\" "
+                    f'style="cursor:pointer;font-size:1rem;opacity:0.6;">📋</span></div>',
+                    unsafe_allow_html=True,
+                )
+            with rcol_up:
                 if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}"):
                     st.session_state.messages[i]["reaction"] = "up"
                     st.rerun()
-            with rcol2:
+            with rcol_down:
                 if st.button("👎" if reacted != "down" else "✅", key=f"down_{i}"):
                     st.session_state.messages[i]["reaction"] = "down"
                     st.rerun()
-            with rcol3:
+            with rcol_regen:
                 if st.button("🔄", key=f"regen_{i}", help="Regenerate this reply"):
                     st.session_state._regen_index = i
                     st.rerun()
