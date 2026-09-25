@@ -467,10 +467,21 @@ _FOUNDER_PATTERNS = [
     "your creator", "who is your creator", "who's your creator",
 ]
 
+NIYAR_BIO_ANSWER = "Niyar Das — a software developer deep into AI and entrepreneurship, plus a sharp chess player on the side."
+_NIYAR_BIO_PATTERNS = [
+    "who is niyar das", "who's niyar das", "who is niyar", "who's niyar",
+    "about niyar das", "tell me about niyar",
+]
+
 
 def _is_founder_question(text: str) -> bool:
     t = (text or "").lower()
     return any(p in t for p in _FOUNDER_PATTERNS)
+
+
+def _is_niyar_bio_question(text: str) -> bool:
+    t = (text or "").lower()
+    return any(p in t for p in _NIYAR_BIO_PATTERNS)
 
 
 def _typewriter(text: str, delay: float = 0.012):
@@ -545,6 +556,14 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
                 stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
             stream_placeholder.markdown(_bubble_html(FOUNDER_ANSWER, "assistant"), unsafe_allow_html=True)
         return FOUNDER_ANSWER
+
+    # "Who is Niyar Das?" also gets a fixed answer
+    if _is_niyar_bio_question(prompt):
+        if stream_placeholder:
+            for partial in _typewriter(NIYAR_BIO_ANSWER):
+                stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
+            stream_placeholder.markdown(_bubble_html(NIYAR_BIO_ANSWER, "assistant"), unsafe_allow_html=True)
+        return NIYAR_BIO_ANSWER
 
     # Build a plain-text transcript for context (used by both API paths below)
     transcript = ""
