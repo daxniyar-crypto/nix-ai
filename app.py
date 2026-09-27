@@ -286,6 +286,20 @@ def inject_css(theme: str):
             background: {btn_hover};
             border-color: {btn_border};
         }}
+        /* Minimal icon-style buttons (like/dislike/regenerate) — no box, just a subtle icon */
+        div.stButton > button[kind="tertiary"] {{
+            background: transparent !important;
+            border: none !important;
+            padding: 0.1rem 0.35rem !important;
+            font-weight: 400 !important;
+            opacity: 0.6;
+            min-height: 0 !important;
+        }}
+        div.stButton > button[kind="tertiary"]:hover {{
+            background: rgba(148, 163, 184, 0.15) !important;
+            opacity: 1;
+            border-radius: 6px;
+        }}
         section[data-testid="stSidebar"] {{
             background-color: {sidebar_bg};
             border-right: 1px solid {sidebar_border};
@@ -904,15 +918,15 @@ def main_app():
                     unsafe_allow_html=True,
                 )
             with rcol_up:
-                if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}"):
+                if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}", type="tertiary"):
                     st.session_state.messages[i]["reaction"] = "up"
                     st.rerun()
             with rcol_down:
-                if st.button("👎" if reacted != "down" else "✅", key=f"down_{i}"):
+                if st.button("👎" if reacted != "down" else "✅", key=f"down_{i}", type="tertiary"):
                     st.session_state.messages[i]["reaction"] = "down"
                     st.rerun()
             with rcol_regen:
-                if st.button("🔄", key=f"regen_{i}", help="Regenerate this reply"):
+                if st.button("🔄", key=f"regen_{i}", help="Regenerate this reply", type="tertiary"):
                     st.session_state._regen_index = i
                     st.rerun()
 
