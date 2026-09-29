@@ -287,18 +287,27 @@ def inject_css(theme: str):
             border-color: {btn_border};
         }}
         /* Minimal icon-style buttons (like/dislike/regenerate) — no box, just a subtle icon */
-        div.stButton > button[kind="tertiary"] {{
+        div[class*="st-key-up_"] button,
+        div[class*="st-key-down_"] button,
+        div[class*="st-key-regen_"] button {{
             background: transparent !important;
             border: none !important;
             padding: 0.1rem 0.35rem !important;
             font-weight: 400 !important;
             opacity: 0.6;
-            min-height: 0 !important;
+            box-shadow: none !important;
         }}
-        div.stButton > button[kind="tertiary"]:hover {{
+        div[class*="st-key-up_"] button:hover,
+        div[class*="st-key-down_"] button:hover,
+        div[class*="st-key-regen_"] button:hover {{
             background: rgba(148, 163, 184, 0.15) !important;
             opacity: 1;
             border-radius: 6px;
+        }}
+        /* Keep the copy/like/dislike/regenerate row horizontal even on narrow mobile screens */
+        div[class*="st-key-actions_"] [data-testid="stHorizontalBlock"] {{
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
         }}
         section[data-testid="stSidebar"] {{
             background-color: {sidebar_bg};
@@ -906,29 +915,30 @@ def main_app():
                 "margin-top:-4px;margin-bottom:2px;'>NIX is AI and can make mistakes</div>",
                 unsafe_allow_html=True,
             )
-            _rspacer, rcol_copy, rcol_up, rcol_down, rcol_regen = st.columns([8, 1, 1, 1, 1])
-            reacted = msg.get("reaction")
-            with rcol_copy:
-                encoded = base64.b64encode((msg["content"] or "").encode("utf-8")).decode("ascii")
-                st.markdown(
-                    f'<div style="text-align:center;padding-top:6px;">'
-                    f'<span onclick="navigator.clipboard.writeText(atob(\'{encoded}\'));'
-                    f"this.innerText='✅';setTimeout(()=>{{this.innerText='📋'}},1000);\" "
-                    f'style="cursor:pointer;font-size:1rem;opacity:0.6;">📋</span></div>',
-                    unsafe_allow_html=True,
-                )
-            with rcol_up:
-                if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}", type="tertiary"):
-                    st.session_state.messages[i]["reaction"] = "up"
-                    st.rerun()
-            with rcol_down:
-                if st.button("👎" if reacted != "down" else "✅", key=f"down_{i}", type="tertiary"):
-                    st.session_state.messages[i]["reaction"] = "down"
-                    st.rerun()
-            with rcol_regen:
-                if st.button("🔄", key=f"regen_{i}", help="Regenerate this reply", type="tertiary"):
-                    st.session_state._regen_index = i
-                    st.rerun()
+            with st.container(key=f"actions_{i}"):
+                _rspacer, rcol_copy, rcol_up, rcol_down, rcol_regen = st.columns([8, 1, 1, 1, 1])
+                reacted = msg.get("reaction")
+                with rcol_copy:
+                    encoded = base64.b64encode((msg["content"] or "").encode("utf-8")).decode("ascii")
+                    st.markdown(
+                        f'<div style="text-align:center;padding-top:6px;">'
+                        f'<span onclick="navigator.clipboard.writeText(atob(\'{encoded}\'));'
+                        f"this.innerText='✅';setTimeout(()=>{{this.innerText='📋'}},1000);\" "
+                        f'style="cursor:pointer;font-size:1rem;opacity:0.6;">📋</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                with rcol_up:
+                    if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}", type="tertiary"):
+                        st.session_state.messages[i]["reaction"] = "up"
+                        st.rerun()
+                with rcol_down:
+                    if st.button("👎" if reacted != "down" else "✅", key=f"down_{i}", type="tertiary"):
+                        st.session_state.messages[i]["reaction"] = "down"
+                        st.rerun()
+                with rcol_regen:
+                    if st.button("🔄", key=f"regen_{i}", help="Regenerate this reply", type="tertiary"):
+                        st.session_state._regen_index = i
+                        st.rerun()
 
     # Quick-start suggestions — only shown on a fresh, empty chat
     quick_prompt = None
