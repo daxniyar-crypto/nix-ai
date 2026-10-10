@@ -824,7 +824,6 @@ def login_page():
                 st.session_state.name = name.strip()
                 st.session_state.phone = phone
                 st.session_state.logged_in = True
-                st.session_state.su_password = password
                 st.rerun()
 
     else:  # Log in
@@ -888,6 +887,11 @@ def render_admin_dashboard():
 
 
 def main_app():
+    # The sign-up / log-in password boxes are gone once you're in, so drop whatever was typed.
+    # (Doing this here is safe; clearing them inside login_page after the widget exists is not.)
+    for _k in ("su_password", "li_password"):
+        st.session_state.pop(_k, None)
+
     with st.sidebar:
         # --- Chat history: new chat + past conversations ---
         st.subheader("Chats")
