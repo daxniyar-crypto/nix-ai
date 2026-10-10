@@ -12,6 +12,8 @@ Upgrades in this version:
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
+import json
 import random
 import time
 import base64
@@ -57,6 +59,7 @@ except Exception:
     API_KEY = ""
 MODEL_NAME = "gemini-3.6-flash"  # current model; gemini-2.5-flash is no longer available to new users
 OTP_VALID_SECONDS = 300  # 5 min
+ADMIN_PHONES = {"8822166691"}  # owner number(s) allowed to open the admin dashboard
 
 st.set_page_config(page_title="NIX AI", page_icon="⚡", layout="centered")
 
@@ -163,6 +166,28 @@ def db_rename_conversation(conversation_id, new_title):
         pass
 
 
+def db_admin_stats():
+    """Totals only for the owner dashboard — never returns chat content."""
+    stats = {"users": None, "conversations": None, "messages": None, "recent_users": []}
+    if not db_available():
+        return stats
+    try:
+        for table in ("users", "conversations", "messages"):
+            res = sb.table(table).select("id", count="exact").limit(1).execute()
+            stats[table] = res.count
+        res = (
+            sb.table("users")
+            .select("name,phone,created_at")
+            .order("created_at", desc=True)
+            .limit(10)
+            .execute()
+        )
+        stats["recent_users"] = res.data or []
+    except Exception:
+        pass
+    return stats
+
+
 def db_get_user(phone):
     if not db_available():
         return None
@@ -226,6 +251,8 @@ defaults = {
     "_suggested_pw": "",               # last auto-suggested signup password
     "_regenerate_now": False,          # flag to regenerate the last AI reply
     "_regen_index": None,              # index of the assistant message being regenerated
+    "_show_admin": False,              # owner-only admin dashboard view
+    "_study_prompt": None,             # prompt queued by the Study mode buttons
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -533,6 +560,57 @@ def _bubble_html(text: str, role: str, image_data_uri: str = None) -> str:
     return f'<div class="chat-row {role}"><div class="chat-bubble {role}">{img_html}\n\n{safe}\n\n</div></div>'
 
 
+def _actions_widget_html(text: str, bg: str) -> str:
+    """Tiny iframe widget with copy and read-aloud icons. It runs in an iframe because
+    Streamlit's markdown does not run inline JS handlers."""
+    payload = json.dumps(text or "").replace("</", "<\\/").replace("<!--", "<\\!--")
+    return f"""
+    <style>html, body {{ margin: 0; background: {bg}; }}</style>
+    <div style="display:flex;gap:12px;justify-content:center;align-items:center;
+                font-size:17px;font-family:sans-serif;height:30px;">
+      <span id="c" title="Copy" style="cursor:pointer;opacity:.65;user-select:none">📋</span>
+      <span id="s" title="Read aloud" style="cursor:pointer;opacity:.65;user-select:none">🔊</span>
+    </div>
+    <script>
+      const T = {payload};
+      const c = document.getElementById('c');
+      const s = document.getElementById('s');
+      c.onclick = async () => {{
+        try {{ await navigator.clipboard.writeText(T); }}
+        catch (e) {{
+          const ta = document.createElement('textarea');
+          ta.value = T; document.body.appendChild(ta); ta.select();
+          try {{ document.execCommand('copy'); }} catch (e2) {{}}
+          ta.remove();
+        }}
+        c.textContent = '✅';
+        setTimeout(() => {{ c.textContent = '📋'; }}, 1000);
+      }};
+      s.onclick = () => {{
+        const synth = window.speechSynthesis;
+        if (!synth) return;
+        if (synth.speaking) {{ synth.cancel(); s.textContent = '🔊'; return; }}
+        const clean = T.replace(/[#*_`>]/g, '');
+        const u = new SpeechSynthesisUtterance(clean);
+        if (/[\\u0900-\\u097F]/.test(clean)) u.lang = 'hi-IN';
+        u.onend = () => {{ s.textContent = '🔊'; }};
+        u.onerror = () => {{ s.textContent = '🔊'; }};
+        s.textContent = '⏹️';
+        synth.speak(u);
+      }};
+    </script>
+    """
+
+
+def _embed_html(html: str, height: int):
+    """Render a small trusted HTML/JS snippet in an iframe.
+    Uses st.iframe on current Streamlit; falls back to components.html on older versions."""
+    if hasattr(st, "iframe"):
+        st.iframe(html.strip(), height=height)
+    else:
+        components.html(html, height=height)
+
+
 def _loading_bubble_html() -> str:
     """An assistant bubble with a bouncing 🚀 shown while waiting for a reply."""
     return (
@@ -557,12 +635,6 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
     over the full response so the UI still feels alive.
     Returns the final full text.
     """
-    if client is None:
-        msg = "⚠️ Please update `API_KEY` in the code with a valid Gemini key from Google AI Studio (starts with `AQ.` or `AIzaSy`)!"
-        if stream_placeholder:
-            stream_placeholder.markdown(_bubble_html(msg, "assistant"), unsafe_allow_html=True)
-        return msg
-
     # Founder/creator questions always get this exact answer — no need to call the API
     if _is_founder_question(prompt):
         if stream_placeholder:
@@ -578,6 +650,12 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
                 stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
             stream_placeholder.markdown(_bubble_html(NIYAR_BIO_ANSWER, "assistant"), unsafe_allow_html=True)
         return NIYAR_BIO_ANSWER
+
+    if client is None:
+        msg = "⚠️ Please update `API_KEY` in the code with a valid Gemini key from Google AI Studio (starts with `AQ.` or `AIzaSy`)!"
+        if stream_placeholder:
+            stream_placeholder.markdown(_bubble_html(msg, "assistant"), unsafe_allow_html=True)
+        return msg
 
     # Build a plain-text transcript for context (used by both API paths below)
     transcript = ""
@@ -783,6 +861,32 @@ def login_page():
 # ---------------------------------------------------------------------
 # MAIN APP
 # ---------------------------------------------------------------------
+def render_admin_dashboard():
+    st.subheader("📊 Admin dashboard")
+    st.caption("Totals only. Chat content is never shown here.")
+    if not db_available():
+        st.warning("Supabase isn't connected, so there's nothing to show yet.")
+        return
+    stats = db_admin_stats()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Users", stats["users"] if stats["users"] is not None else "—")
+    c2.metric("Chats", stats["conversations"] if stats["conversations"] is not None else "—")
+    c3.metric("Messages", stats["messages"] if stats["messages"] is not None else "—")
+    st.markdown("#### Recent signups")
+    rows = []
+    for u in stats["recent_users"]:
+        phone = str(u.get("phone") or "")
+        rows.append({
+            "Name": u.get("name") or "—",
+            "Phone": ("•••••• " + phone[-4:]) if len(phone) >= 4 else "—",
+            "Joined": str(u.get("created_at") or "")[:10],
+        })
+    if rows:
+        st.dataframe(rows, hide_index=True, use_container_width=True)
+    else:
+        st.caption("No signups yet.")
+
+
 def main_app():
     with st.sidebar:
         # --- Chat history: new chat + past conversations ---
@@ -865,14 +969,39 @@ def main_app():
                             system_context=text[:12000],
                             stream_placeholder=summary_placeholder,
                         )
+                st.caption("Study mode")
+                if st.button("📝 Make a quiz", key="study_quiz", use_container_width=True):
+                    st.session_state._study_prompt = (
+                        "Make a 5-question multiple-choice quiz from the document. "
+                        "Give options A to D for each question, then an answer key with a one-line explanation."
+                    )
+                if st.button("🃏 Make flashcards", key="study_cards", use_container_width=True):
+                    st.session_state._study_prompt = (
+                        "Make 8 flashcards from the document. Format each as **Q:** question and **A:** answer."
+                    )
+                if st.button("📒 Short notes", key="study_notes", use_container_width=True):
+                    st.session_state._study_prompt = (
+                        "Write short, well-organised study notes from the document: key points as bullets under clear headings."
+                    )
             else:
                 st.error("Failed to parse file.")
+
+        if st.session_state.phone in ADMIN_PHONES:
+            st.markdown("---")
+            admin_label = "← Back to chat" if st.session_state.get("_show_admin") else "📊 Admin dashboard"
+            if st.button(admin_label, key="admin_toggle"):
+                st.session_state._show_admin = not st.session_state.get("_show_admin", False)
+                st.rerun()
 
         st.markdown("---")
         if st.button("Terminate Session"):
             for k, v in defaults.items():
                 st.session_state[k] = v
             st.rerun()
+
+    if st.session_state.phone in ADMIN_PHONES and st.session_state.get("_show_admin"):
+        render_admin_dashboard()
+        return
 
     # --- Handle a pending "regenerate" request from a previous rerun ---
     if st.session_state.get("_regen_index") is not None:
@@ -916,17 +1045,11 @@ def main_app():
                 unsafe_allow_html=True,
             )
             with st.container(key=f"actions_{i}"):
-                _rspacer, rcol_copy, rcol_up, rcol_down, rcol_regen = st.columns([8, 1, 1, 1, 1])
+                _rspacer, rcol_tools, rcol_up, rcol_down, rcol_regen = st.columns([6, 2, 1, 1, 1])
                 reacted = msg.get("reaction")
-                with rcol_copy:
-                    encoded = base64.b64encode((msg["content"] or "").encode("utf-8")).decode("ascii")
-                    st.markdown(
-                        f'<div style="text-align:center;padding-top:6px;">'
-                        f'<span onclick="navigator.clipboard.writeText(atob(\'{encoded}\'));'
-                        f"this.innerText='✅';setTimeout(()=>{{this.innerText='📋'}},1000);\" "
-                        f'style="cursor:pointer;font-size:1rem;opacity:0.6;">📋</span></div>',
-                        unsafe_allow_html=True,
-                    )
+                with rcol_tools:
+                    page_bg = "#0b0f19" if st.session_state.theme == "dark" else "#f8fafc"
+                    _embed_html(_actions_widget_html(msg["content"], page_bg), height=32)
                 with rcol_up:
                     if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}", type="tertiary"):
                         st.session_state.messages[i]["reaction"] = "up"
@@ -971,6 +1094,9 @@ def main_app():
         effective_files = user_input.files or []
     elif quick_prompt:
         effective_text = quick_prompt
+    elif st.session_state.get("_study_prompt"):
+        effective_text = st.session_state._study_prompt
+        st.session_state._study_prompt = None
 
     if effective_text or effective_files:
         text = effective_text or ""
