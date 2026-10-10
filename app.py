@@ -824,7 +824,7 @@ def login_page():
                 st.session_state.name = name.strip()
                 st.session_state.phone = phone
                 st.session_state.logged_in = True
-                st.session_state.su_password = ""
+                st.session_state.su_password = password
                 st.rerun()
 
     else:  # Log in
