@@ -16,6 +16,8 @@ import streamlit.components.v1 as components
 import json
 from datetime import datetime, timedelta, timezone
 import random
+import re
+import html as _html_lib
 import time
 import base64
 import io
@@ -330,6 +332,7 @@ defaults = {
     "_show_admin": False,              # owner-only admin dashboard view
     "_study_prompt": None,             # prompt queued by the Study mode buttons
     "_cap_cache": None,                # {day, phone, used} for the daily message cap
+    "auth_open": False,                # False = landing page, True = sign-in card
 }
 for key, val in defaults.items():
     if key not in st.session_state:
@@ -341,19 +344,19 @@ for key, val in defaults.items():
 # ---------------------------------------------------------------------
 def inject_css(theme: str):
     if theme == "dark":
-        bg, fg, sub = "#0b0f19", "#e2e8f0", "#94a3b8"
-        card_bg, card_border = "#111827", "#1f2937"
-        input_bg, input_border = "#111827", "#374151"
-        btn_bg, btn_border, btn_hover = "#1e293b", "#334155", "#334155"
-        sidebar_bg, sidebar_border = "#0f172a", "#1e293b"
+        bg, fg, sub = "#07070a", "#ececf1", "#a3a3b0"
+        card_bg, card_border = "#0f0f14", "#23232c"
+        input_bg, input_border = "#0f0f14", "#2c2c36"
+        btn_bg, btn_border, btn_hover = "#14141b", "#2c2c36", "#1d1d26"
+        sidebar_bg, sidebar_border = "#0a0a0e", "#1c1c24"
         title_color = "#ffffff"
     else:
-        bg, fg, sub = "#f8fafc", "#0f172a", "#64748b"
-        card_bg, card_border = "#ffffff", "#e2e8f0"
-        input_bg, input_border = "#ffffff", "#cbd5e1"
-        btn_bg, btn_border, btn_hover = "#e2e8f0", "#cbd5e1", "#cbd5e1"
-        sidebar_bg, sidebar_border = "#f1f5f9", "#e2e8f0"
-        title_color = "#0b0f19"
+        bg, fg, sub = "#f7f7f9", "#0c0c10", "#5d5d68"
+        card_bg, card_border = "#ffffff", "#e3e3e9"
+        input_bg, input_border = "#ffffff", "#d2d2da"
+        btn_bg, btn_border, btn_hover = "#ececf0", "#d2d2da", "#e0e0e6"
+        sidebar_bg, sidebar_border = "#f0f0f4", "#e3e3e9"
+        title_color = "#0c0c10"
 
     st.markdown(f"""
     <style>
@@ -444,8 +447,8 @@ def inject_css(theme: str):
             word-wrap: break-word;
         }}
         .chat-bubble.user {{
-            background-color: #4169E1;
-            border: 1px solid #3A5FCD;
+            background: linear-gradient(135deg, #c4121f 0%, #7d0e17 100%);
+            border: 1px solid rgba(255, 59, 74, 0.45);
             color: #ffffff;
             border-bottom-left-radius: 4px;
         }}
@@ -529,12 +532,113 @@ def inject_css(theme: str):
     """, unsafe_allow_html=True)
 
 
+_ORB_SVG = r"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800"><defs><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#ff2a3a" stop-opacity=".5"/><stop offset=".55" stop-color="#e11d2e" stop-opacity=".15"/><stop offset="1" stop-color="#e11d2e" stop-opacity="0"/></radialGradient><radialGradient id="o" cx="34%" cy="28%" r="80%"><stop offset="0" stop-color="#4b4b57"/><stop offset=".28" stop-color="#17171d"/><stop offset=".7" stop-color="#050507"/><stop offset="1" stop-color="#000"/></radialGradient><radialGradient id="c" cx="70%" cy="74%" r="55%"><stop offset="0" stop-color="#ff2a3a" stop-opacity=".95"/><stop offset=".45" stop-color="#b3101c" stop-opacity=".5"/><stop offset="1" stop-color="#b3101c" stop-opacity="0"/></radialGradient><linearGradient id="r" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".5" stop-color="#9a9aa8" stop-opacity=".4"/><stop offset="1" stop-color="#fff" stop-opacity=".85"/></linearGradient><filter id="b" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter></defs><circle cx="400" cy="400" r="392" fill="none" stroke="#e11d2e" stroke-opacity=".4" stroke-width="2"/><circle cx="400" cy="400" r="336" fill="url(#g)"/><g transform="rotate(-24 400 400)" fill="none"><ellipse cx="400" cy="400" rx="318" ry="104" stroke="#e11d2e" stroke-opacity=".4" stroke-width="18" filter="url(#b)"/><ellipse cx="400" cy="400" rx="318" ry="104" stroke="url(#r)" stroke-width="7" stroke-opacity=".55"/></g><circle cx="400" cy="400" r="212" fill="url(#o)"/><circle cx="400" cy="400" r="212" fill="url(#c)"/><ellipse cx="334" cy="316" rx="88" ry="46" fill="#fff" fill-opacity=".24" filter="url(#b)" transform="rotate(-32 334 316)"/><g transform="rotate(-24 400 400)" fill="none"><path d="M82 400 A318 104 0 0 0 718 400" stroke="url(#r)" stroke-width="7"/><circle cx="718" cy="400" r="9" fill="#ff3b4a"/><circle cx="82" cy="400" r="6" fill="#fff" fill-opacity=".8"/></g></svg>"""
+
+
+def inject_theme_css(theme: str, view: str):
+    """The black-and-red 'AI interface' look: fonts, landing hero, sign-in card, responsive rules."""
+    t = {"RED": "#e11d2e", "REDHI": "#ff3b4a", "REDRGB": "225,29,46", "FG": "#ececf1", "MUTED": "#a3a3b0",
+         "BG": "#07070a", "SURF": "15,15,20", "BORDER": "#26262f", "GLOW": "0.10"}
+    if theme != "dark":
+        t = {"RED": "#d4141f", "REDHI": "#ec2230", "REDRGB": "212,20,31", "FG": "#0c0c10", "MUTED": "#5d5d68",
+             "BG": "#f7f7f9", "SURF": "255,255,255", "BORDER": "#e0e0e7", "GLOW": "0.07"}
+    t["MAXW"] = "1240px" if view == "landing" else "880px"
+    t["ORB"] = urllib.parse.quote(_ORB_SVG, safe="")
+    css = """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Inter:wght@400;500;600&display=swap');
+    :root { --red: __RED__; --red-hi: __REDHI__; --fg: __FG__; --muted: __MUTED__; --bg: __BG__; --border: __BORDER__; }
+    html, body, .stApp { overflow-x: hidden; }
+    .stApp {
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        background: radial-gradient(900px 520px at 85% -8%, rgba(__REDRGB__, __GLOW__), transparent 62%), var(--bg) !important;
+    }
+    /* quiet the Streamlit chrome so it reads as a product, not a script */
+    [data-testid="stToolbar"], [data-testid="stDecoration"], #MainMenu, footer { display: none !important; }
+    [data-testid="stHeader"] { background: transparent !important; }
+    [data-testid="stMainBlockContainer"], .block-container {
+        max-width: __MAXW__ !important;
+        padding: 2.2rem clamp(1rem, 4vw, 3.5rem) 5.5rem !important;
+    }
+    [data-testid="stMain"], [data-testid="stSidebar"] { position: relative; z-index: 1; }
+    div.stButton > button:hover { border-color: var(--red); }
+    input:focus, textarea:focus { border-color: var(--red) !important; box-shadow: 0 0 0 1px var(--red) !important; }
+    [data-testid="stChatInput"] textarea:focus, [data-testid="stChatInput"] input:focus { border: none !important; box-shadow: none !important; }
+    h1, h2, h3, .nix-title { font-family: 'Orbitron', 'Inter', system-ui, sans-serif; }
+    .nix-title {
+        font-size: clamp(1rem, 3.4vw, 1.35rem) !important; letter-spacing: .08em !important; text-transform: none;
+        border-bottom: 1px solid var(--border) !important; padding-bottom: .9rem !important; margin-bottom: 1.1rem !important;
+    }
+    .chat-bubble.assistant { background: rgba(__SURF__, .92); border-color: var(--border); }
+    @media (max-width: 640px) { .chat-bubble { max-width: 90% !important; font-size: .95rem !important; } }
+
+    /* ---------- landing + sign-in ---------- */
+    .nix-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .2rem 0 1.2rem; }
+    .nix-brand { font-family: 'Orbitron', sans-serif; font-weight: 800; letter-spacing: .24em; font-size: clamp(.8rem, 2.6vw, 1rem); color: var(--fg); display: flex; align-items: center; gap: .65rem; }
+    .nix-brand i { width: .55rem; height: .55rem; border-radius: 50%; background: var(--red); box-shadow: 0 0 14px var(--red); display: inline-block; }
+    .nix-contact { font-size: .68rem; letter-spacing: .22em; text-transform: uppercase; color: var(--fg) !important; text-decoration: none !important;
+        border: 1px solid rgba(__REDRGB__, .6); padding: .6rem 1.15rem; border-radius: 999px; white-space: nowrap; }
+    .nix-contact:hover { background: rgba(__REDRGB__, .16); }
+    .nix-copy { max-width: min(100%, 40rem); margin-top: clamp(.6rem, 5vh, 3.2rem); }
+    .nix-tags { border-left: 2px solid var(--red); padding-left: .8rem; font-size: .6rem; letter-spacing: .3em; line-height: 1.7; color: var(--muted); margin-bottom: clamp(1rem, 3.5vh, 2rem); }
+    .nix-tags span { display: block; }
+    .nix-h1 { font-family: 'Orbitron', sans-serif !important; font-weight: 800 !important; text-transform: uppercase; line-height: 1.04 !important;
+        letter-spacing: .01em !important; margin: 0 !important; padding: 0 !important; color: var(--fg); font-size: clamp(2.3rem, 13vw, 4.5rem) !important; }
+    .nix-h1 .ln { display: block; }
+    .nix-h1 [data-testid="stHeaderActionElements"] { display: none !important; }
+    .nix-h1 .r { color: var(--red); text-shadow: 0 0 34px rgba(__REDRGB__, .45); }
+    .nix-copy .nix-sub { font-size: .72rem; letter-spacing: .24em; text-transform: uppercase; color: var(--muted); margin: 1.5rem 0 1.8rem !important; line-height: 1.9; }
+    div[class*="st-key-hero_actions"] [data-testid="stHorizontalBlock"] { flex-direction: row !important; flex-wrap: wrap !important; gap: .8rem !important; width: auto !important; }
+    div[class*="st-key-hero_actions"] [data-testid="stColumn"] { flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }
+    div[class*="st-key-btn_login"] button, div[class*="st-key-btn_signup"] button, div[class*="st-key-btn_create"] button, div[class*="st-key-btn_do_login"] button { font-family: 'Orbitron', sans-serif !important; font-size: .74rem !important; letter-spacing: .18em !important; text-transform: uppercase;
+        font-weight: 700 !important; border-radius: 999px !important; min-height: 3rem; padding: .8rem 2rem !important; transition: all .18s ease; }
+    div[class*="st-key-btn_login"] button p, div[class*="st-key-btn_signup"] button p, div[class*="st-key-btn_create"] button p, div[class*="st-key-btn_do_login"] button p { font-family: inherit !important; letter-spacing: inherit; font-weight: inherit; }
+    div[class*="st-key-btn_login"] button, div[class*="st-key-btn_create"] button, div[class*="st-key-btn_do_login"] button {
+        background: var(--red) !important; border: 1px solid var(--red) !important; color: #fff !important; box-shadow: 0 0 28px rgba(__REDRGB__, .42); }
+    div[class*="st-key-btn_login"] button:hover, div[class*="st-key-btn_create"] button:hover, div[class*="st-key-btn_do_login"] button:hover { background: var(--red-hi) !important; border-color: var(--red-hi) !important; }
+    div[class*="st-key-btn_signup"] button { background: #fff !important; border: 1px solid #fff !important; color: #0c0c10 !important; }
+    div[class*="st-key-btn_signup"] button:hover { background: #e7e7ec !important; }
+    div[class*="st-key-btn_create"] button, div[class*="st-key-btn_do_login"] button { width: 100%; }
+    div[class*="st-key-actions_"] [data-testid="stColumn"] { min-width: 0 !important; }
+    div[class*="st-key-actions_"] button { width: 100% !important; min-height: 2.3rem !important; }
+    div[class*="st-key-auth_card"] [data-testid="stHorizontalBlock"] { flex-direction: row !important; flex-wrap: nowrap !important; align-items: flex-end; gap: .6rem !important; }
+    div[class*="st-key-auth_card"] [data-testid="stColumn"] { min-width: 0 !important; }
+    div[class*="st-key-btn_suggest_pw"] button { min-height: 2.75rem; padding: 0 .9rem; border-radius: 12px; }
+    div[class*="st-key-auth_back"] button { font-size: .72rem !important; letter-spacing: .14em; color: var(--muted) !important; }
+    div[class*="st-key-auth_card"] { max-width: 30rem; margin: .6rem auto 0; padding: 1.4rem clamp(1rem, 4vw, 1.8rem) 1.1rem;
+        border: 1px solid rgba(__REDRGB__, .4); border-radius: 18px; background: rgba(__SURF__, .78);
+        backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 0 70px rgba(__REDRGB__, .12); }
+    .nix-card-title { font-family: 'Orbitron', sans-serif; font-weight: 700; letter-spacing: .2em; font-size: .78rem; margin-bottom: .9rem; color: var(--fg); }
+    .nix-help { margin-top: auto; padding-top: 2.4rem; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .35rem 1rem;
+        font-size: .86rem; color: var(--fg); text-align: center; line-height: 1.6; }
+    .nix-help .l { font-size: .62rem; letter-spacing: .26em; text-transform: uppercase; color: var(--muted); width: 100%; }
+    .nix-help a { color: var(--fg) !important; text-decoration: none !important; border-bottom: 1px solid rgba(__REDRGB__, .85); padding-bottom: 1px; font-weight: 500; }
+    div[data-testid="stElementContainer"]:has(.nix-help) { margin-top: auto; }
+    [data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] { min-height: calc(100vh - 7.5rem); }
+    __ORBCSS__
+    </style>
+    """
+    orb_css = ""
+    if view == "landing":
+        orb_css = """
+    [data-testid="stAppViewContainer"]::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+        background-image: url("data:image/svg+xml;utf8,__ORB__"); background-repeat: no-repeat;
+        background-position: right clamp(0rem, 3vw, 4rem) center; background-size: min(60vw, 84vh, 800px); }
+    @media (max-width: 820px) {
+        [data-testid="stAppViewContainer"]::before { background-position: 50% 118%; background-size: min(124vw, 600px); opacity: .7; }
+    }"""
+    css = css.replace("__ORBCSS__", orb_css)
+    for k, v in t.items():
+        css = css.replace(f"__{k}__", v)
+    st.markdown(css, unsafe_allow_html=True)
+
+
 inject_css(st.session_state.theme)
 
+inject_theme_css(st.session_state.theme, "chat" if st.session_state.logged_in else "landing")
+
 if st.session_state.logged_in and st.session_state.name:
-    st.markdown(f"<h1 class='nix-title'>Heyy {st.session_state.name} 👋🏾</h1>", unsafe_allow_html=True)
-else:
-    st.markdown("<h1 class='nix-title'>NIX AI</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 class='nix-title'>Heyy {_html_lib.escape(st.session_state.name)} 👋🏾</h1>", unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------
@@ -564,27 +668,36 @@ def extract_text(uploaded_file):
         return None
 
 
-def _with_retry(fn, max_attempts=4, base_delay=1.0):
-    """
-    Runs fn() with automatic retries on transient errors (503 overloaded,
-    429 rate-limited, timeouts, connection resets). Uses exponential backoff
-    so a busy Gemini server doesn't kill the demo — it just quietly retries.
-    Raises the last exception if all attempts fail.
-    """
-    transient_markers = ["503", "overloaded", "429", "rate limit", "timeout",
-                          "unavailable", "deadline", "connection reset", "temporarily"]
-    last_err = None
+def _classify_error(e) -> str:
+    """Sort an API error into: auth, missing, quota_day, quota_minute, transient, other."""
+    t = str(e).lower()
+    squashed = t.replace(" ", "").replace("_", "")
+    code = getattr(e, "code", None)
+    if not isinstance(code, int):
+        code = getattr(e, "status_code", None)
+    if code in (401, 403) or any(k in t for k in ("api key not valid", "api_key_invalid", "unauthenticated", "permission_denied")):
+        return "auth"
+    if code == 404 or any(k in t for k in ("not_found", "no longer available", "is not found")):
+        return "missing"
+    if code == 429 or any(k in t for k in ("resource_exhausted", "quota", "rate limit", "429")):
+        if any(k in squashed for k in ("perday", "requestsperday", "daily")):
+            return "quota_day"
+        return "quota_minute"
+    if code in (500, 502, 503, 504) or any(k in t for k in ("503", "overloaded", "unavailable", "deadline", "timeout", "timed out", "connection", "temporarily")):
+        return "transient"
+    return "other"
+
+
+def _with_retry(fn, max_attempts=3, base_delay=1.0):
+    """Retries only short hiccups (503, timeouts). Quota, missing-model and key errors fail
+    straight away, because waiting won't fix them."""
     for attempt in range(max_attempts):
         try:
             return fn()
         except Exception as e:
-            last_err = e
-            err_text = str(e).lower()
-            is_transient = any(marker in err_text for marker in transient_markers)
-            if not is_transient or attempt == max_attempts - 1:
+            if _classify_error(e) != "transient" or attempt == max_attempts - 1:
                 raise
-            time.sleep(base_delay * (2 ** attempt))  # 1s, 2s, 4s, ...
-    raise last_err
+            time.sleep(base_delay * (2 ** attempt))  # 1s, 2s
 
 
 FOUNDER_ANSWER = "Yo 👋 I was built by NIYAR DAS — the mastermind behind NIX AI"
@@ -643,10 +756,10 @@ def _actions_widget_html(text: str, bg: str) -> str:
     payload = json.dumps(text or "").replace("</", "<\\/").replace("<!--", "<\\!--")
     return f"""
     <style>html, body {{ margin: 0; background: {bg}; }}</style>
-    <div style="display:flex;gap:12px;justify-content:center;align-items:center;
+    <div style="display:flex;gap:2px;justify-content:center;align-items:center;
                 font-size:17px;font-family:sans-serif;height:30px;">
-      <span id="c" title="Copy" style="cursor:pointer;opacity:.65;user-select:none">📋</span>
-      <span id="s" title="Read aloud" style="cursor:pointer;opacity:.65;user-select:none">🔊</span>
+      <span id="c" title="Copy" style="cursor:pointer;opacity:.65;user-select:none;padding:7px 9px">📋</span>
+      <span id="s" title="Read aloud" style="cursor:pointer;opacity:.65;user-select:none;padding:7px 9px">🔊</span>
     </div>
     <script>
       const T = {payload};
@@ -705,6 +818,193 @@ def _loading_bubble_html() -> str:
     )
 
 
+# ---------------------------------------------------------------------
+# MODEL LADDER: free quotas are per model, so when one is used up we move to the next
+# ---------------------------------------------------------------------
+_DEFAULT_MODELS = [MODEL_NAME, "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+_COOLDOWN = {"quota_day": 3600, "quota_minute": 60, "missing": 6 * 3600, "transient": 20}
+
+
+def _model_ladder():
+    """Models to try, in order. Set MODEL_NAMES in Secrets (a list or comma-separated) to change them."""
+    try:
+        raw = st.secrets["MODEL_NAMES"]
+    except Exception:
+        raw = None
+    if raw:
+        names = [x.strip() for x in raw.split(",")] if isinstance(raw, str) else [str(x).strip() for x in list(raw)]
+        names = [n for n in names if n]
+        if names:
+            return names
+    return list(_DEFAULT_MODELS)
+
+
+@st.cache_resource
+def _quota_board():
+    """Shared by every visitor while the app runs: model -> {"until": timestamp, "why": reason}."""
+    return {}
+
+
+def _bench(model, kind, err_text=""):
+    """Rest a model for a while so nobody waits on one we already know is out."""
+    seconds = _COOLDOWN.get(kind, 60)
+    if kind == "quota_minute":
+        m = re.search(r"retrydelay\W+(\d+)", err_text.lower())
+        if m:
+            seconds = min(max(int(m.group(1)) + 2, 5), 300)
+    _quota_board()[model] = {"until": time.time() + seconds, "why": kind}
+
+
+def _live_models():
+    now = time.time()
+    board = _quota_board()
+    return [m for m in _model_ladder() if board.get(m, {}).get("until", 0) <= now]
+
+
+class _AllModelsDown(Exception):
+    pass
+
+
+def _ai_down_message():
+    now = time.time()
+    board = _quota_board()
+    ladder = _model_ladder()
+    waits = [(board[m]["until"] - now, board[m]["why"]) for m in ladder if m in board and board[m]["until"] > now]
+    if not waits:
+        return "⚠️ NIX AI is busy right now. Please try again in a minute."
+    if len(waits) == len(ladder) and all(why == "missing" for _, why in waits):
+        return "⚠️ The AI models aren't available right now. (Owner: check MODEL_NAMES in Secrets.)"
+    wait, why = min(waits)
+    if wait <= 120:
+        if why == "transient":
+            return "⚠️ Gemini's servers are busy right now. Please try again in a few seconds."
+        return "⚠️ NIX AI is getting a lot of requests right now. Please try again in a minute."
+    return "⚠️ NIX AI's free quota for today is used up. It should reset around 1 PM IST, please try again then. 🙏"
+
+
+def _run_ladder(call):
+    """Try each live model in turn. call(model) returns the reply text."""
+    for model in _live_models():
+        try:
+            return call(model)
+        except Exception as e:
+            kind = _classify_error(e)
+            if kind in ("auth", "other"):
+                raise  # another model won't fix a bad key or a bad request
+            _bench(model, kind, str(e))
+    raise _AllModelsDown(_ai_down_message())
+
+
+def _friendly_error(e, prefix="⚠️ Something went wrong talking to Gemini:"):
+    kind = _classify_error(e)
+    if kind == "transient":
+        return "⚠️ Gemini's servers are busy right now. Please try again in a few seconds."
+    if kind == "auth":
+        return "⚠️ API key issue — please check the key in Settings/Secrets."
+    return f"{prefix} {e}"
+
+
+def _type_out(text, placeholder):
+    if not placeholder:
+        return
+    for partial in _typewriter(text):
+        placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
+    placeholder.markdown(_bubble_html(text, "assistant"), unsafe_allow_html=True)
+
+
+def _call_model(model, full_prompt, contents, stream_placeholder):
+    """One model, best API first. Returns the reply text, or raises the API's error."""
+    if hasattr(client, "interactions"):
+        try:
+            if stream_placeholder:
+                stream_placeholder.markdown(_loading_bubble_html(), unsafe_allow_html=True)
+            result = _with_retry(lambda: client.interactions.create(model=model, input=full_prompt))
+            text = result.output_text
+            if not text:
+                raise ValueError("The model returned an empty reply")
+            _type_out(text, stream_placeholder)
+            return text
+        except Exception as e:
+            if _classify_error(e) != "other":
+                raise
+            # the Interactions API isn't usable here (older SDK or key): use the classic API below
+    if hasattr(client.models, "generate_content_stream"):
+        try:
+            def _run_stream():
+                collected = ""
+                for chunk in client.models.generate_content_stream(model=model, contents=contents):
+                    piece = getattr(chunk, "text", "") or ""
+                    collected += piece
+                    if stream_placeholder:
+                        stream_placeholder.markdown(_bubble_html(collected + "▌", "assistant"), unsafe_allow_html=True)
+                return collected
+            collected = _with_retry(_run_stream)
+            if not collected:
+                raise ValueError("The model returned an empty reply")
+            if stream_placeholder:
+                stream_placeholder.markdown(_bubble_html(collected, "assistant"), unsafe_allow_html=True)
+            return collected
+        except Exception as e:
+            if _classify_error(e) != "other":
+                raise
+    response = _with_retry(lambda: client.models.generate_content(model=model, contents=contents))
+    text = response.text
+    if not text:
+        raise ValueError("The model returned an empty reply")
+    _type_out(text, stream_placeholder)
+    return text
+
+
+# ---------------------------------------------------------------------
+# READY-MADE REPLIES: "hi", "thanks" and friends don't need the AI (saves quota)
+# ---------------------------------------------------------------------
+_GREET_RE = re.compile(r"^(h+i+|he+y+|he+l+o+|yo+|hola|namaste|namaskar|ram ram|sup|gm|good (morning|afternoon|evening))( (there|bro|buddy|nix|nix ai|bhai|dost))?$")
+_THANKS_RE = re.compile(r"^(thanks?|thank you|thank u|thanku|thx|ty|shukriya|dhanyavad|dhanyawad)( (a lot|so much|nix|bro|bhai|again))*$")
+_BYE_RE = re.compile(r"^(bye+|good ?bye|see you|see ya|ok bye|okay bye|tata|gn|good night|shubh ratri)$")
+_ACK_RE = re.compile(r"^(ok+|okay+|okk+|k|kk|alright|cool|nice|great|got it|theek hai|thik hai|acha|accha|hmm+|hm+)$")
+
+
+def _local_reply(text, history):
+    """A canned reply for a bare greeting / thanks / goodbye / 'ok', else None (the AI answers)."""
+    if not text or "?" in text:
+        return None
+    t = re.sub(r"[^a-z0-9\u0900-\u097f ]+", " ", text.lower())
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t or len(t.split()) > 5:
+        return None
+    name = (st.session_state.get("name") or "").strip()
+    who = f" {name}" if name else ""
+    casual = st.session_state.get("ai_tone") == "Casual / Gen-Z"
+    if _GREET_RE.match(t):
+        return random.choice([f"Yo{who}! 👋 What's up?", f"Heyy{who} 👋 What are we doing today?"] if casual
+                             else [f"Hello{who}! 👋 How can I help you today?", f"Hi{who}! What can I help you with?"])
+    if _THANKS_RE.match(t):
+        return random.choice(["Anytime! 🙌", "You got it 😎 Anything else?"] if casual
+                             else ["You're welcome! 😊 Anything else I can help with?", "Happy to help! Let me know if you need anything else."])
+    if _BYE_RE.match(t):
+        return random.choice(["See you! 👋", "Take care! 👋"])
+    if _ACK_RE.match(t):
+        last = next((m for m in reversed(history or []) if m.get("role") == "assistant"), None)
+        if last and "?" in (last.get("content") or "")[-200:]:
+            return None  # the AI just asked something, so "ok" is a real answer
+        return "👍 Let me know if you need anything else."
+    return None
+
+
+def _is_local_prompt(text, history):
+    return bool(_is_founder_question(text) or _is_niyar_bio_question(text) or _local_reply(text, history))
+
+
+def ai_available(text="", has_image=False):
+    """False (with a notice) only when every model is known to be out and this message needs the AI."""
+    if client is None or _live_models():
+        return True
+    if text and not has_image and _is_local_prompt(text, st.session_state.messages):
+        return True
+    st.warning(_ai_down_message())
+    return False
+
+
 def ask_ai(prompt, system_context="", stream_placeholder=None):
     """
     Calls Gemini. If the SDK supports streaming (generate_content_stream), uses it
@@ -727,6 +1027,12 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
                 stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
             stream_placeholder.markdown(_bubble_html(NIYAR_BIO_ANSWER, "assistant"), unsafe_allow_html=True)
         return NIYAR_BIO_ANSWER
+
+    # Greetings / thanks / goodbyes get a ready-made reply, no AI call
+    local = _local_reply(prompt, st.session_state.messages[:-1])
+    if local:
+        _type_out(local, stream_placeholder)
+        return local
 
     if client is None:
         msg = "⚠️ Please update `API_KEY` in the code with a valid Gemini key from Google AI Studio (starts with `AQ.` or `AIzaSy`)!"
@@ -754,22 +1060,6 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
         full_prompt += f"Conversation so far:\n{transcript}\n"
     full_prompt += f"User: {prompt}"
 
-    # --- Path 1: Interactions API (recommended for new "AQ." auth keys) ---
-    try:
-        if hasattr(client, "interactions"):
-            if stream_placeholder:
-                stream_placeholder.markdown(_loading_bubble_html(), unsafe_allow_html=True)
-            result = _with_retry(lambda: client.interactions.create(model=MODEL_NAME, input=full_prompt))
-            text = result.output_text
-            if stream_placeholder:
-                for partial in _typewriter(text):
-                    stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
-                stream_placeholder.markdown(_bubble_html(text, "assistant"), unsafe_allow_html=True)
-            return text
-    except Exception:
-        pass  # fall through to legacy path below (e.g. older SDK, legacy AIzaSy key)
-
-    # --- Path 2: legacy models.generate_content (works with older AIzaSy keys) ---
     history_formatted = [
         {
             "role": "user" if m["role"] == "user" else "model",
@@ -780,45 +1070,14 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
     contents = history_formatted + [{"role": "user", "parts": [{"text": full_prompt}]}]
 
     try:
-        if hasattr(client.models, "generate_content_stream"):
-            def _run_stream():
-                collected = ""
-                for chunk in client.models.generate_content_stream(model=MODEL_NAME, contents=contents):
-                    piece = getattr(chunk, "text", "") or ""
-                    collected += piece
-                    if stream_placeholder:
-                        stream_placeholder.markdown(_bubble_html(collected + "▌", "assistant"), unsafe_allow_html=True)
-                return collected
-            collected = _with_retry(_run_stream)
-            if stream_placeholder:
-                stream_placeholder.markdown(_bubble_html(collected, "assistant"), unsafe_allow_html=True)
-            return collected
-    except Exception:
-        pass
-
-    try:
-        response = _with_retry(lambda: client.models.generate_content(model=MODEL_NAME, contents=contents))
-        text = response.text
-        if stream_placeholder:
-            for partial in _typewriter(text):
-                stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
-            stream_placeholder.markdown(_bubble_html(text, "assistant"), unsafe_allow_html=True)
-        return text
+        return _run_ladder(lambda model: _call_model(model, full_prompt, contents, stream_placeholder))
+    except _AllModelsDown as down:
+        err = str(down)
     except Exception as e:
-        # Friendly message instead of a raw stack trace / error code —
-        # so a demo never shows something scary like "503" on screen.
-        err_text = str(e).lower()
-        if any(m in err_text for m in ["503", "overloaded", "unavailable"]):
-            err = "⚠️ Gemini's servers are busy right now. Please try again in a few seconds."
-        elif "429" in err_text or "rate limit" in err_text:
-            err = "⚠️ Too many requests right now — please wait a moment and try again."
-        elif "401" in err_text or "unauthenticated" in err_text or "invalid" in err_text:
-            err = "⚠️ API key issue — please check the key in Settings/Secrets."
-        else:
-            err = f"⚠️ Something went wrong talking to Gemini: {e}"
-        if stream_placeholder:
-            stream_placeholder.markdown(_bubble_html(err, "assistant"), unsafe_allow_html=True)
-        return err
+        err = _friendly_error(e)
+    if stream_placeholder:
+        stream_placeholder.markdown(_bubble_html(err, "assistant"), unsafe_allow_html=True)
+    return err
 
 
 def ask_ai_vision(prompt, image_bytes, mime_type="image/jpeg", stream_placeholder=None):
@@ -838,32 +1097,36 @@ def ask_ai_vision(prompt, image_bytes, mime_type="image/jpeg", stream_placeholde
         ],
     }]
 
-    try:
-        response = _with_retry(lambda: client.models.generate_content(model=MODEL_NAME, contents=contents))
+    def _vision_call(model):
+        response = _with_retry(lambda: client.models.generate_content(model=model, contents=contents))
         text = response.text
-        if stream_placeholder:
-            for partial in _typewriter(text):
-                stream_placeholder.markdown(_bubble_html(partial + "▌", "assistant"), unsafe_allow_html=True)
-            stream_placeholder.markdown(_bubble_html(text, "assistant"), unsafe_allow_html=True)
+        if not text:
+            raise ValueError("The model returned an empty reply")
+        _type_out(text, stream_placeholder)
         return text
+
+    try:
+        return _run_ladder(_vision_call)
+    except _AllModelsDown as down:
+        err = str(down)
     except Exception as e:
-        err_text = str(e).lower()
-        if any(m in err_text for m in ["503", "overloaded", "unavailable"]):
-            err = "⚠️ Gemini's servers are busy right now. Please try again in a few seconds."
-        elif "429" in err_text or "rate limit" in err_text:
-            err = "⚠️ Too many requests right now — please wait a moment and try again."
-        else:
-            err = f"⚠️ Couldn't analyze the image: {e}"
-        if stream_placeholder:
-            stream_placeholder.markdown(_bubble_html(err, "assistant"), unsafe_allow_html=True)
-        return err
+        err = _friendly_error(e, prefix="⚠️ Couldn't analyze the image:")
+    if stream_placeholder:
+        stream_placeholder.markdown(_bubble_html(err, "assistant"), unsafe_allow_html=True)
+    return err
 
 
 # ---------------------------------------------------------------------
 # LOGIN PAGE
 # ---------------------------------------------------------------------
-def login_page():
-    st.subheader("Authentication")
+def _suggest_password():
+    """on_click callback: runs before the password box is built, so it may set its value."""
+    pw = _generate_strong_password()
+    st.session_state.su_password = pw
+    st.session_state._suggested_pw = pw
+
+
+def _auth_form():
     mode = st.radio("Mode", ["Log in", "Sign up"], horizontal=True, label_visibility="collapsed", key="auth_mode")
 
     if mode == "Sign up":
@@ -878,14 +1141,12 @@ def login_page():
             password = st.text_input("Password", type="password", key="su_password")
         with btn_col:
             st.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
-            if st.button("🔑", help="Suggest a strong password"):
-                st.session_state.su_password = _generate_strong_password()
-                st.rerun()
+            st.button("🔑", help="Suggest a strong password", key="btn_suggest_pw", on_click=_suggest_password)
 
-        if st.session_state.su_password:
-            st.caption(f"Password: `{st.session_state.su_password}` — feel free to edit it above.")
+        if st.session_state.get("_suggested_pw") and st.session_state.su_password == st.session_state._suggested_pw:
+            st.caption(f"Suggested password: `{st.session_state._suggested_pw}` — save it somewhere safe. You can edit it above.")
 
-        if st.button("Create account"):
+        if st.button("Create account", key="btn_create"):
             if not name.strip():
                 st.error("Please enter your name.")
             elif not (phone.isdigit() and len(phone) == 10):
@@ -906,7 +1167,7 @@ def login_page():
     else:  # Log in
         phone = st.text_input("Phone Number", max_chars=10, placeholder="9876543210", key="li_phone")
         password = st.text_input("Password", type="password", key="li_password")
-        if st.button("Log in"):
+        if st.button("Log in", key="btn_do_login"):
             if not db_available():
                 st.error("Login needs Supabase set up (SUPABASE_URL / SUPABASE_KEY in Secrets).")
             else:
@@ -919,19 +1180,54 @@ def login_page():
                     st.session_state.logged_in = True
                     st.rerun()
 
-    # --- Help / contact section ---
-    whatsapp_number = "918822166691"  # +91 8822166691, no "+" or spaces for wa.me links
-    whatsapp_message = "Hey Niyar, I need help with NIX AI 🙏"
-    wa_link = f"https://wa.me/{whatsapp_number}?text={urllib.parse.quote(whatsapp_message)}"
 
-    st.markdown(f"""
-    <div style='text-align:center; font-size:0.8rem; opacity:0.65; margin-top:2.5rem; line-height:1.6;'>
-        For any kind of help, contact us —<br>
-        <a href="mailto:niyardaxx@gmail.com" style="color:inherit; text-decoration:underline;">niyardaxx@gmail.com</a>
-        &nbsp;or&nbsp;
-        <a href="{wa_link}" target="_blank" style="color:inherit; text-decoration:underline;">+91 88221 66691</a>
-    </div>
-    """, unsafe_allow_html=True)
+_TOPBAR_HTML = (
+    '<div class="nix-top"><div class="nix-brand"><i></i>NIX AI</div>'
+    '<a class="nix-contact" href="mailto:niyardaxx@gmail.com">Contact</a></div>'
+)
+
+
+def _help_html() -> str:
+    wa_link = "https://wa.me/918822166691?text=" + urllib.parse.quote("Hey Niyar, I need help with NIX AI 🙏")
+    return (
+        '<div class="nix-help"><span class="l">For any kind of help, contact</span>'
+        '<a href="mailto:niyardaxx@gmail.com">niyardaxx@gmail.com</a><span>or</span>'
+        f'<a href="{wa_link}" target="_blank" rel="noopener">WhatsApp +91 88221 66691</a></div>'
+    )
+
+
+def _open_auth(mode):
+    st.session_state.auth_open = True
+    st.session_state.auth_mode = mode
+    st.rerun()
+
+
+def login_page():
+    if not st.session_state.get("auth_open"):
+        st.markdown(
+            _TOPBAR_HTML
+            + '<div class="nix-copy"><div class="nix-tags"><span>ASK</span><span>LEARN</span><span>CREATE</span><span>EXPLORE</span></div>'
+            '<h1 class="nix-h1"><span class="ln">NIX AI</span><span class="ln">THE NEXT</span><span class="ln r">GEN AI</span></h1>'
+            '<p class="nix-sub">Ask anything. Learn faster. Create more.</p></div>',
+            unsafe_allow_html=True,
+        )
+        with st.container(key="hero_actions"):
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Log in  →", key="btn_login"):
+                    _open_auth("Log in")
+            with c2:
+                if st.button("Sign up", key="btn_signup"):
+                    _open_auth("Sign up")
+    else:
+        st.markdown(_TOPBAR_HTML, unsafe_allow_html=True)
+        with st.container(key="auth_card"):
+            st.markdown('<div class="nix-card-title">ACCESS NIX AI</div>', unsafe_allow_html=True)
+            _auth_form()
+            if st.button("← Back", key="auth_back", type="tertiary"):
+                st.session_state.auth_open = False
+                st.rerun()
+    st.markdown(_help_html(), unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------
@@ -948,6 +1244,22 @@ def render_admin_dashboard():
     c1.metric("Users", stats["users"] if stats["users"] is not None else "—")
     c2.metric("Chats", stats["conversations"] if stats["conversations"] is not None else "—")
     c3.metric("Messages", stats["messages"] if stats["messages"] is not None else "—")
+    st.markdown("#### AI models")
+    now = time.time()
+    board = _quota_board()
+    model_rows = []
+    for i, m in enumerate(_model_ladder(), 1):
+        b = board.get(m)
+        if b and b["until"] > now:
+            label = {"quota_day": "daily quota used up", "quota_minute": "rate-limited", "missing": "not found", "transient": "busy"}.get(b["why"], b["why"])
+            status = f"{label} (retry in ~{max(1, int((b['until'] - now) / 60))} min)"
+        else:
+            status = "ready"
+        model_rows.append({"Order": i, "Model": m, "Status": status})
+    st.dataframe(model_rows, hide_index=True, use_container_width=True)
+    if st.button("Re-check models now", key="recheck_models"):
+        board.clear()
+        st.rerun()
     st.markdown("#### Recent signups")
     rows = []
     for u in stats["recent_users"]:
@@ -966,7 +1278,7 @@ def render_admin_dashboard():
 def main_app():
     # The sign-up / log-in password boxes are gone once you're in, so drop whatever was typed.
     # (Doing this here is safe; clearing them inside login_page after the widget exists is not.)
-    for _k in ("su_password", "li_password"):
+    for _k in ("su_password", "li_password", "_suggested_pw"):
         st.session_state.pop(_k, None)
 
     with st.sidebar:
@@ -1093,8 +1405,8 @@ def main_app():
     if st.session_state.get("_regen_index") is not None:
         idx = st.session_state._regen_index
         st.session_state._regen_index = None
-        if not within_daily_cap():
-            idx = -1  # at the limit: skip the regeneration
+        if not (within_daily_cap() and ai_available()):
+            idx = -1  # at the limit, or the AI is out: keep the existing reply
         if 0 <= idx < len(st.session_state.messages) and st.session_state.messages[idx]["role"] == "assistant":
             prev_user_msg = None
             for j in range(idx - 1, -1, -1):
@@ -1133,10 +1445,10 @@ def main_app():
                 unsafe_allow_html=True,
             )
             with st.container(key=f"actions_{i}"):
-                _rspacer, rcol_tools, rcol_up, rcol_down, rcol_regen = st.columns([6, 2, 1, 1, 1])
+                _rspacer, rcol_tools, rcol_up, rcol_down, rcol_regen = st.columns([3, 2, 1, 1, 1])
                 reacted = msg.get("reaction")
                 with rcol_tools:
-                    page_bg = "#0b0f19" if st.session_state.theme == "dark" else "#f8fafc"
+                    page_bg = "#07070a" if st.session_state.theme == "dark" else "#f7f7f9"
                     _embed_html(_actions_widget_html(msg["content"], page_bg), height=32)
                 with rcol_up:
                     if st.button("👍" if reacted != "up" else "✅", key=f"up_{i}", type="tertiary"):
@@ -1192,7 +1504,9 @@ def main_app():
         effective_text = st.session_state._study_prompt
         st.session_state._study_prompt = None
 
-    if (effective_text or effective_files) and not within_daily_cap():
+    if (effective_text or effective_files) and not (
+        within_daily_cap() and ai_available(effective_text or "", bool(effective_files))
+    ):
         effective_text, effective_files = None, []
 
     if effective_text or effective_files:
