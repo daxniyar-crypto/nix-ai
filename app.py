@@ -62,6 +62,7 @@ except Exception:
     API_KEY = ""
 MODEL_NAME = "gemini-3.6-flash"  # current model; gemini-2.5-flash is no longer available to new users
 OTP_VALID_SECONDS = 300  # 5 min
+ADMIN_PHONES = {"8822166691"} # owner number(s) allowed to open the admin dashboard
 try:
     DAILY_MESSAGE_CAP = int(st.secrets["DAILY_CAP"])  # change it in Secrets, no code edit needed
 except Exception:
