@@ -1183,16 +1183,14 @@ def _auth_form():
 
 _TOPBAR_HTML = (
     '<div class="nix-top"><div class="nix-brand"><i></i>NIX AI</div>'
-    '<a class="nix-contact" href="mailto:niyardaxx@gmail.com">Contact</a></div>'
+    '<a class="nix-contact" href="mailto:support.nixai@gmail.com">Contact</a></div>'
 )
 
 
 def _help_html() -> str:
-    wa_link = "https://wa.me/918822166691?text=" + urllib.parse.quote("Hey Niyar, I need help with NIX AI 🙏")
     return (
         '<div class="nix-help"><span class="l">For any kind of help, contact</span>'
-        '<a href="mailto:niyardaxx@gmail.com">niyardaxx@gmail.com</a><span>or</span>'
-        f'<a href="{wa_link}" target="_blank" rel="noopener">WhatsApp +91 88221 66691</a></div>'
+        '<a href="mailto:support.nixai@gmail.com">support.nixai@gmail.com</a></div>'
     )
 
 
