@@ -1012,6 +1012,8 @@ def ask_ai(prompt, system_context="", stream_placeholder=None):
     over the full response so the UI still feels alive.
     Returns the final full text.
     """
+  current_live_time = datetime.now(_IST).strftime("%B %d, %Y, %I:%M %p IST")
+  system_context = f"Current live date and time is {current_live_time}. \n" + (system_context or "")
     # Founder/creator questions always get this exact answer — no need to call the API
     if _is_founder_question(prompt):
         if stream_placeholder:
