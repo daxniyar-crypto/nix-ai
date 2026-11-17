@@ -6,7 +6,7 @@ Upgrades in this version:
   2. Custom chat bubbles, no avatars/icons — user messages left, AI replies right
   3. Light / Dark theme toggle (persisted in session)
   4. Automatic retry on transient errors (503 / 429 / timeouts)
-  5. Name field at login + personalized "Heyy [naam] 👋🏾" greeting
+  5. Name field at login + personalized "Hey [naam] 👋🏾" greeting
   6. Camera / gallery image upload — ask questions about a photo (Gemini vision)
   7. Persistent chat history + multiple conversations, saved via Supabase
 """
@@ -707,7 +707,7 @@ _FOUNDER_PATTERNS = [
     "your creator", "who is your creator", "who's your creator",
 ]
 
-NIYAR_BIO_ANSWER = "Niyar Das — a software developer deep into AI and entrepreneurship, plus a sharp chess player on the side."
+NIYAR_BIO_ANSWER = "Niyar Das — a software developer deep into AI and entrepreneurship, plus a sharp chess player on the side.\n\nWant to know more about him?👉🏼 https://niyardas.netlify.app/"
 _NIYAR_BIO_PATTERNS = [
     "who is niyar das", "who's niyar das", "who is niyar", "who's niyar",
     "about niyar das", "tell me about niyar",
